@@ -345,6 +345,7 @@ function voiceMatches(live){
 
 // ─ LAUNCH MAIN ──────────────────────────────
 function launchMain(){
+  console.log("🚀 [MAIN] launchMain() | cfg:", JSON.stringify({name:cfg.assistantName,personality:cfg.personality,voiceLock:cfg.voiceLock}));
   hide("setupScreen"); hide("enrollScreen"); show("mainScreen");
   document.getElementById("headerTitle").textContent=cfg.assistantName.toUpperCase();
   document.documentElement.style.setProperty("--c",cfg.accentColor||"#00e5ff");
@@ -352,11 +353,21 @@ function launchMain(){
   const lb=g("lockBadge"); if(lb)lb.style.display=(voiceLockEnabled&&voiceProfile)?"block":"none";
   const n=(cfg.assistantName||"sam").toLowerCase();
   dynWake=[`hey ${n}`,`hey, ${n}`,`okay ${n}`,`ok ${n}`,`hi ${n}`];
+  console.log("👂 [MAIN] Wake words set to:", dynWake);
   try{messages=JSON.parse(localStorage.getItem("sam_h_"+cfg.assistantName)||"[]");}catch{messages=[];}
+  console.log("💬 [MAIN] Loaded", messages.length, "messages from history");
   renderAll();
+  console.log("🎙️ [MAIN] Requesting microphone permission...");
   navigator.mediaDevices.getUserMedia({audio:true})
-    .then(()=>{wakeReady=true;setOrb("wake");startWakeLoop();})
-    .catch(()=>showErr("🎙️ Mic denied. Allow in settings & reload."));
+    .then(stream=>{
+      console.log("✅ [MAIN] Mic permission GRANTED | tracks:", stream.getAudioTracks().length);
+      stream.getTracks().forEach(t=>t.stop()); // release, STT will re-acquire
+      wakeReady=true; setOrb("wake"); startWakeLoop();
+    })
+    .catch(err=>{
+      console.error("❌ [MAIN] Mic permission DENIED:", err.name, err.message);
+      showErr("🎙️ Mic denied. Allow in settings & reload.");
+    });
 }
 
 // ─ SYSTEM PROMPT ────────────────────────────
@@ -410,70 +421,197 @@ function drawIcon(s,col){
 
 // ─ TTS ──────────────────────────────────────
 function speak(text,cb){
+  console.log("🔊 [TTS] speak() called | text length:", text.length, "| voiceStyle:", cfg.voiceStyle);
   setOrb("speaking"); synth.cancel();
   const u=new SpeechSynthesisUtterance(text);
   const v=VP[cfg.voiceStyle]||VP.normal; u.rate=v.r; u.pitch=v.p;
-  const vs=synth.getVoices(),pv=vs.find(v=>/samantha|karen|victoria|female|zira/i.test(v.name))||vs[0];
-  if(pv)u.voice=pv; u.onend=u.onerror=()=>cb?.(); synth.speak(u);
+  const vs=synth.getVoices();
+  console.log("🔊 [TTS] Available voices:", vs.length, "| looking for preferred female voice");
+  const pv=vs.find(v=>/samantha|karen|victoria|female|zira/i.test(v.name))||vs[0];
+  if(pv){ u.voice=pv; console.log("🔊 [TTS] Using voice:", pv.name, pv.lang); }
+  else { console.warn("⚠️ [TTS] No voices available yet — using browser default"); }
+  u.onstart=()=>console.log("▶️ [TTS] Speech started");
+  u.onend=()=>{ console.log("✅ [TTS] Speech ended normally"); cb?.(); };
+  u.onerror=(e)=>{ console.error("❌ [TTS] Speech error:", e.error); cb?.(); };
+  synth.speak(u);
+  console.log("🚀 [TTS] synth.speak() called | synth.speaking:", synth.speaking, "| synth.pending:", synth.pending);
 }
 
 // ─ CLAUDE ───────────────────────────────────
 async function askClaude(txt){
-  if(processing)return; processing=true; setOrb("thinking");
+  console.log("🤖 [CLAUDE] askClaude() called | processing:", processing, "| text:", `"${txt}"`);
+  if(processing){ console.warn("⚠️ [CLAUDE] Already processing — ignoring call"); return; }
+  processing=true; setOrb("thinking");
   const um={role:"user",content:txt}; messages.push(um); addBubble(um); save();
+  console.log("📤 [CLAUDE] Sending to API | messages in history:", messages.length);
   try{
     const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:prompt(),messages:messages.map(m=>({role:m.role==="sam"?"assistant":"user",content:m.content}))})});
-    const d=await res.json(),reply=d.content?.map(c=>c.text||"").join("")||"Sorry, I didn't get that.";
+    console.log("📥 [CLAUDE] API response status:", res.status, res.statusText);
+    const d=await res.json();
+    console.log("📥 [CLAUDE] API response body:", JSON.stringify(d).slice(0,200));
+    if(d.error){ console.error("❌ [CLAUDE] API returned error:", d.error); }
+    const reply=d.content?.map(c=>c.text||"").join("")||"Sorry, I didn't get that.";
+    console.log("✅ [CLAUDE] Reply:", `"${reply.slice(0,80)}..."`);
     const sm={role:"sam",content:reply}; messages.push(sm); addBubble(sm); save();
     speak(reply,()=>{setOrb("wake");startWakeLoop();});
-  }catch{showErr("Network error.");setTimeout(()=>{hideErr();setOrb("wake");startWakeLoop();},3000);}
-  finally{processing=false;}
+  }catch(e){
+    console.error("❌ [CLAUDE] fetch() threw an error:", e.name, e.message);
+    showErr("Network error."); setTimeout(()=>{hideErr();setOrb("wake");startWakeLoop();},3000);
+  }
+  finally{ processing=false; console.log("🏁 [CLAUDE] askClaude() finished"); }
 }
 
 // ─ QUERY LISTEN ─────────────────────────────
 function startQueryListen(){
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition; if(!SR)return;
-  try{queryRecog?.abort();}catch{}
-  const r=new SR(); r.lang="en-US"; r.interimResults=false; r.maxAlternatives=1; queryRecog=r;
-  r.onstart=()=>setOrb("listening");
-  r.onresult=e=>{const t=e.results[0][0].transcript;g("transcriptEl").textContent=`"${t}"`;askClaude(t);};
-  r.onerror=e=>{if(e.error!=="no-speech")showErr("Couldn't hear you.");setTimeout(()=>{hideErr();setOrb("wake");startWakeLoop();},2200);};
-  r.onend=()=>{if(appState==="listening"){setOrb("wake");startWakeLoop();}};
-  r.start();
+  console.log("🎤 [QUERY] startQueryListen() called | appState:", appState, "| wakeReady:", wakeReady);
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){
+    console.error("❌ [QUERY] SpeechRecognition API not supported in this browser!");
+    showErr("Speech recognition not supported.");
+    return;
+  }
+  console.log("✅ [QUERY] SpeechRecognition API found:", SR.name || "SpeechRecognition");
+  try{queryRecog?.abort(); console.log("🛑 [QUERY] Aborted previous queryRecog");}catch(e){console.warn("⚠️ [QUERY] Could not abort previous queryRecog:", e);}
+
+  const r=new SR();
+  r.lang="en-US"; r.interimResults=false; r.maxAlternatives=1;
+  queryRecog=r;
+  console.log("🔧 [QUERY] Recognition configured — lang:", r.lang, "| interimResults:", r.interimResults);
+
+  r.onstart=()=>{
+    console.log("▶️ [QUERY] onstart fired — mic is now active, listening for speech");
+    setOrb("listening");
+  };
+  r.onspeechstart=()=>console.log("🗣️ [QUERY] onspeechstart — speech detected in mic");
+  r.onspeechend=()=>console.log("🔇 [QUERY] onspeechend — speech ended");
+  r.onaudiostart=()=>console.log("🔊 [QUERY] onaudiostart — audio capture started");
+  r.onaudioend=()=>console.log("🔕 [QUERY] onaudioend — audio capture ended");
+  r.onnomatch=()=>console.warn("🤷 [QUERY] onnomatch — speech detected but no recognition match");
+
+  r.onresult=e=>{
+    const t=e.results[0][0].transcript;
+    const conf=e.results[0][0].confidence;
+    console.log("✅ [QUERY] onresult — transcript:", `"${t}"`, "| confidence:", conf.toFixed(2));
+    g("transcriptEl").textContent=`"${t}"`;
+    askClaude(t);
+  };
+
+  r.onerror=e=>{
+    console.error("❌ [QUERY] onerror fired — error code:", e.error, "| message:", e.message || "(none)");
+    console.error("   Common causes:");
+    console.error("   • 'not-allowed' = mic permission denied");
+    console.error("   • 'no-speech'   = silence, nothing spoken");
+    console.error("   • 'aborted'     = recognition was manually stopped");
+    console.error("   • 'network'     = no internet or API unreachable");
+    console.error("   • 'audio-capture' = mic hardware issue");
+    if(e.error==="not-allowed"){
+      showErr("Mic permission denied — allow mic & reload.");
+    } else if(e.error==="network"){
+      showErr("Network error on speech recognition.");
+    } else if(e.error!=="no-speech" && e.error!=="aborted"){
+      showErr("Couldn't hear you. ("+e.error+")");
+    }
+    setTimeout(()=>{hideErr();setOrb("wake");startWakeLoop();},2200);
+  };
+
+  r.onend=()=>{
+    console.log("🏁 [QUERY] onend fired | appState at end:", appState);
+    if(appState==="listening"){
+      console.log("↩️ [QUERY] No result received — returning to wake mode");
+      setOrb("wake"); startWakeLoop();
+    }
+  };
+
+  try{
+    r.start();
+    console.log("🚀 [QUERY] r.start() called successfully");
+  }catch(e){
+    console.error("❌ [QUERY] r.start() threw an error:", e.name, e.message);
+    showErr("Could not start microphone: "+e.message);
+  }
 }
 
 // ─ WAKE LOOP ────────────────────────────────
 function startWakeLoop(){
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition; if(!SR||!wakeReady)return;
-  try{wakeRecog?.abort();}catch{}
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ console.error("❌ [WAKE] SpeechRecognition not supported"); return; }
+  if(!wakeReady){ console.warn("⚠️ [WAKE] wakeReady=false, skipping wake loop start"); return; }
+  console.log("👂 [WAKE] startWakeLoop() — listening for wake words:", dynWake);
+  try{wakeRecog?.abort(); console.log("🛑 [WAKE] Aborted previous wakeRecog");}catch(e){console.warn("⚠️ [WAKE] Could not abort:", e);}
+
   const r=new SR(); r.lang="en-US"; r.continuous=false; r.interimResults=false; r.maxAlternatives=3; wakeRecog=r;
+
+  r.onstart=()=>console.log("▶️ [WAKE] Wake recognition started — waiting for 'Hey SAM'");
+  r.onaudiostart=()=>console.log("🔊 [WAKE] Audio capture started");
+  r.onaudioend=()=>console.log("🔕 [WAKE] Audio capture ended");
+
   r.onresult=async e=>{
     const heard=Array.from(e.results).flatMap(r=>Array.from(r)).map(a=>a.transcript.toLowerCase().trim());
-    if(!heard.some(h=>dynWake.some(w=>h.includes(w))))return;
+    console.log("👂 [WAKE] onresult — heard:", heard);
+    const triggered=heard.some(h=>dynWake.some(w=>h.includes(w)));
+    console.log("🔍 [WAKE] Wake word triggered?", triggered, "| checking against:", dynWake);
+    if(!triggered){ console.log("🚫 [WAKE] No wake word match — ignoring"); return; }
+
     // voice lock check
     if(voiceLockEnabled&&voiceProfile){
+      console.log("🔒 [WAKE] Voice lock enabled — capturing audio for comparison...");
       try{wakeRecog?.abort();}catch{}
       const live=await captureFeatures(1200);
-      if(!voiceMatches(live)){flashRed();showRejectToast();setTimeout(()=>{if(appState==="wake")startWakeLoop();},1600);return;}
+      console.log("📊 [WAKE] Live voice features:", live);
+      const matched=voiceMatches(live);
+      console.log("🔒 [WAKE] Voice match result:", matched);
+      if(!matched){
+        console.warn("🚫 [WAKE] Voice lock REJECTED — wrong voice detected");
+        flashRed(); showRejectToast();
+        setTimeout(()=>{if(appState==="wake")startWakeLoop();},1600);
+        return;
+      }
+      console.log("✅ [WAKE] Voice lock ACCEPTED — proceeding");
     }
-    // accepted
+
+    console.log("🟢 [WAKE] Wake word accepted! Playing acknowledgement...");
     try{wakeRecog?.abort();}catch{}
     showToast(); synth.cancel();
     const ack=new SpeechSynthesisUtterance("Mm-hmm?");
     const v=VP[cfg.voiceStyle]||VP.normal; ack.rate=v.r*1.1; ack.pitch=v.p; ack.volume=0.7;
     const vs=synth.getVoices(),pv=vs.find(v=>/samantha|karen|victoria|female|zira/i.test(v.name))||vs[0];
-    if(pv)ack.voice=pv; ack.onend=ack.onerror=()=>startQueryListen(); synth.speak(ack);
+    if(pv){ ack.voice=pv; console.log("🔊 [WAKE] Using voice:", pv.name); }
+    else { console.warn("⚠️ [WAKE] No preferred voice found, using default"); }
+    ack.onend=()=>{ console.log("🎙️ [WAKE] Ack done — starting query listen"); startQueryListen(); };
+    ack.onerror=(e)=>{ console.error("❌ [WAKE] Ack TTS error:", e); startQueryListen(); };
+    synth.speak(ack);
   };
-  r.onend=()=>{if(appState==="wake")setTimeout(()=>{if(appState==="wake")startWakeLoop();},300);};
-  try{r.start();}catch{}
+
+  r.onerror=e=>{
+    console.error("❌ [WAKE] onerror — code:", e.error);
+    if(e.error==="not-allowed") showErr("Mic denied — allow mic & reload.");
+  };
+
+  r.onend=()=>{
+    console.log("🏁 [WAKE] onend | appState:", appState);
+    if(appState==="wake") setTimeout(()=>{if(appState==="wake"){ console.log("🔄 [WAKE] Restarting wake loop"); startWakeLoop();}},300);
+  };
+
+  try{ r.start(); console.log("🚀 [WAKE] r.start() called"); }
+  catch(e){ console.error("❌ [WAKE] r.start() threw:", e.name, e.message); }
 }
 
 // ─ ORB CLICK ────────────────────────────────
 function handleOrbClick(){
-  if(appState==="wake"){try{wakeRecog?.abort();}catch{}startQueryListen();}
-  else if(appState==="listening"){try{queryRecog?.abort();}catch{}setOrb("wake");startWakeLoop();}
-  else if(appState==="speaking"){synth.cancel();setOrb("wake");startWakeLoop();}
+  console.log("👆 [ORB] Orb tapped | appState:", appState, "| wakeReady:", wakeReady);
+  if(appState==="wake"){
+    console.log("🎤 [ORB] State=wake → stopping wake loop, starting query listen");
+    try{wakeRecog?.abort();}catch{} startQueryListen();
+  } else if(appState==="listening"){
+    console.log("🛑 [ORB] State=listening → cancelling, returning to wake");
+    try{queryRecog?.abort();}catch{} setOrb("wake"); startWakeLoop();
+  } else if(appState==="speaking"){
+    console.log("🛑 [ORB] State=speaking → cancelling TTS, returning to wake");
+    synth.cancel(); setOrb("wake"); startWakeLoop();
+  } else {
+    console.log("⚠️ [ORB] Tap ignored — state is:", appState);
+  }
 }
 
 // ─ UTILS ────────────────────────────────────
@@ -495,13 +633,33 @@ function flashRed(){const f=document.createElement("div");f.className="rej-flash
 
 // ─ BOOT ─────────────────────────────────────
 (function(){
+  console.log("🟢 [BOOT] SAM initializing...");
+  console.log("🌐 [BOOT] Browser:", navigator.userAgent);
+  console.log("🎤 [BOOT] SpeechRecognition supported?", !!(window.SpeechRecognition||window.webkitSpeechRecognition));
+  console.log("🔊 [BOOT] SpeechSynthesis supported?", !!window.speechSynthesis);
+  console.log("🎙️ [BOOT] getUserMedia supported?", !!(navigator.mediaDevices?.getUserMedia));
+  console.log("📦 [BOOT] localStorage supported?", (()=>{try{localStorage.setItem("_t","1");localStorage.removeItem("_t");return true;}catch{return false;}})());
+
   try{cfg=JSON.parse(localStorage.getItem("sam_cfg")||"{}");}catch{cfg={};}
+  console.log("⚙️ [BOOT] Loaded config:", cfg.assistantName ? `name="${cfg.assistantName}"` : "none (first launch)");
+
   try{voiceProfile=JSON.parse(localStorage.getItem("sam_vp")||"null");}catch{voiceProfile=null;}
   voiceLockEnabled=!!(cfg.voiceLock&&voiceProfile);
-  if(cfg.assistantName){loadCfgUI();launchMain();}
+  console.log("🔒 [BOOT] Voice lock enabled?", voiceLockEnabled, "| profile exists?", !!voiceProfile);
+
+  if(cfg.assistantName){
+    console.log("↩️ [BOOT] Returning user — skipping setup, launching main");
+    loadCfgUI(); launchMain();
+  } else {
+    console.log("👋 [BOOT] First launch — showing setup screen");
+  }
 })();
-if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
-if(synth.onvoiceschanged!==undefined)synth.onvoiceschanged=()=>{};
+if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js")
+  .then(()=>console.log("✅ [SW] Service worker registered"))
+  .catch(e=>console.warn("⚠️ [SW] Service worker failed:", e));
+if(synth.onvoiceschanged!==undefined) synth.onvoiceschanged=()=>{
+  console.log("🔊 [TTS] Voices loaded:", synth.getVoices().length, "voices available");
+};
 </script>
 </body>
 </html>
