@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<meta name="theme-color" content="#00e5ff"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<link rel="manifest" href="manifest.json"/>
+<title>SAM – Voice Assistant</title>
+<link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;background:#050a18;font-family:'Exo 2',sans-serif;color:#fff}
+:root{--c:#00e5ff}
+.screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;z-index:10;transition:opacity .4s,transform .4s;overflow-y:auto}
+.screen.hidden{opacity:0;pointer-events:none;transform:translateY(16px)}
+
+/* SETUP */
+#setupScreen{background:radial-gradient(ellipse at 20% 20%,#0d1b3e,#050a18 60%);justify-content:flex-start;padding:max(env(safe-area-inset-top),28px) 18px 32px}
+.si{width:100%;max-width:400px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.logo{text-align:center;margin-bottom:2px}
+.logo h1{font-size:48px;font-weight:700;letter-spacing:10px;background:linear-gradient(135deg,#fff 30%,#00e5ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.logo p{font-family:'Space Mono',monospace;font-size:9px;letter-spacing:4px;color:rgba(0,229,255,.55);text-transform:uppercase;margin-top:4px}
+.sec{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);border-radius:14px;padding:14px}
+.sec h3{font-family:'Space Mono',monospace;font-size:9px;letter-spacing:3px;color:rgba(0,229,255,.65);text-transform:uppercase;margin-bottom:11px}
+.fl{font-size:11px;color:rgba(255,255,255,.4);margin-bottom:5px}
+input[type=text],textarea{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:9px 12px;color:#fff;font-family:'Exo 2',sans-serif;font-size:14px;outline:none;resize:none}
+input[type=text]:focus,textarea:focus{border-color:rgba(0,229,255,.4)}
+input::placeholder,textarea::placeholder{color:rgba(255,255,255,.2)}
+textarea{height:68px;line-height:1.5}
+.pg{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.pc{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:10px 7px;cursor:pointer;text-align:center;transition:all .2s}
+.pc.sel{background:rgba(0,229,255,.1);border-color:rgba(0,229,255,.45)}
+.pc .em{font-size:19px;margin-bottom:3px}.pc .pn{font-size:12px;font-weight:600}.pc .pd{font-size:9px;color:rgba(255,255,255,.35);margin-top:1px}
+.vg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.vc{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:9px;padding:8px 4px;cursor:pointer;text-align:center;transition:all .2s}
+.vc.sel{background:rgba(105,255,71,.08);border-color:rgba(105,255,71,.4)}
+.vc .vn{font-size:11px;font-weight:600}.vc .vd{font-size:9px;color:rgba(255,255,255,.35);margin-top:1px}
+.cr{display:flex;gap:8px;flex-wrap:wrap}
+.cd{width:26px;height:26px;border-radius:50%;cursor:pointer;transition:transform .2s;border:2px solid transparent}
+.cd.sel{transform:scale(1.28);border-color:#fff}
+.lock-row{display:flex;align-items:center;justify-content:space-between}
+.lock-info h3{margin-bottom:3px}
+.lock-info p{font-size:11px;color:rgba(255,255,255,.4);line-height:1.5}
+.toggle-wrap{position:relative;width:42px;height:22px;flex-shrink:0}
+.toggle-bg{position:absolute;inset:0;border-radius:22px;background:rgba(255,255,255,.12);cursor:pointer;transition:.3s}
+.toggle-thumb{position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.3s;pointer-events:none}
+#startBtn{width:100%;padding:13px;border-radius:13px;border:none;font-family:'Space Mono',monospace;font-size:12px;letter-spacing:3px;cursor:pointer;background:linear-gradient(135deg,#00b4d8,#0077b6);color:#fff;box-shadow:0 4px 18px rgba(0,180,216,.3)}
+#startBtn:active{opacity:.8}
+
+/* ENROLL */
+#enrollScreen{background:#050a18;justify-content:center;padding:28px 22px}
+.eb{width:100%;max-width:320px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:18px}
+.eb h2{font-size:20px;font-weight:700;letter-spacing:2px}
+.eb p{font-size:12px;color:rgba(255,255,255,.5);line-height:1.7}
+#enrollOrb{width:112px;height:112px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#00e5ff77,#00e5ff22);box-shadow:0 0 36px #00e5ff44;display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative}
+.er{position:absolute;width:100%;height:100%;border-radius:50%;border:2px solid #00e5ff;opacity:0}
+.er.act{animation:orbPulse 1.8s ease-out infinite}
+.er:nth-child(2).act{animation-delay:.6s}
+.er:nth-child(3).act{animation-delay:1.2s}
+#enrollStatus{font-family:'Space Mono',monospace;font-size:10px;letter-spacing:2px;color:rgba(0,229,255,.65);text-transform:uppercase;min-height:14px}
+.sdots{display:flex;gap:8px;justify-content:center}
+.sd{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.13);transition:background .3s}
+.sd.done{background:#69ff47}
+.sd.rec{background:#ff4081;animation:dotPulse .6s ease-in-out infinite alternate}
+#skipEnroll{background:transparent;border:none;color:rgba(255,255,255,.28);font-size:11px;cursor:pointer;font-family:'Space Mono',monospace;letter-spacing:1px}
+
+/* MAIN */
+#mainScreen{background:transparent;justify-content:flex-start}
+#grid{position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(0,229,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,255,.04) 1px,transparent 1px);background-size:40px 40px;animation:gridFloat 8s ease-in-out infinite}
+#header{width:100%;padding:max(env(safe-area-inset-top),16px) 14px 5px;text-align:center;flex-shrink:0;z-index:2;position:relative}
+#settingsBtn{position:absolute;right:13px;top:max(env(safe-area-inset-top),16px);background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+#lockBadge{position:absolute;left:13px;top:max(env(safe-area-inset-top),16px);background:rgba(105,255,71,.1);border:1px solid rgba(105,255,71,.28);border-radius:20px;padding:3px 9px;font-family:'Space Mono',monospace;font-size:7px;letter-spacing:2px;color:rgba(105,255,71,.75);display:none}
+#headerLabel{font-family:'Space Mono',monospace;font-size:9px;letter-spacing:5px;color:var(--c);text-transform:uppercase;margin-bottom:2px;transition:color .4s}
+#headerTitle{font-size:34px;font-weight:700;letter-spacing:8px;background:linear-gradient(135deg,#fff 30%,var(--c));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+#wakeHint{font-family:'Space Mono',monospace;font-size:9px;letter-spacing:1px;color:rgba(74,111,165,.6);margin-top:2px;transition:opacity .3s}
+#chat{flex:1;width:100%;max-width:500px;overflow-y:auto;padding:9px 12px;z-index:2;-webkit-overflow-scrolling:touch}
+#chat::-webkit-scrollbar{width:3px}
+#chat::-webkit-scrollbar-thumb{background:rgba(255,255,255,.09);border-radius:2px}
+.empty-msg{text-align:center;color:rgba(255,255,255,.15);font-family:'Space Mono',monospace;font-size:10px;letter-spacing:1px;margin-top:18px;line-height:2.2}
+.bw{display:flex;margin-bottom:9px;animation:fadeUp .3s ease}
+.bw.user{justify-content:flex-end}
+.bw.sam{align-items:flex-start}
+.av{width:23px;height:23px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;margin-right:7px;flex-shrink:0;margin-top:2px}
+.bb{max-width:78%;padding:8px 12px;font-size:13px;line-height:1.5;color:#fff;word-break:break-word}
+.bb.user{border-radius:18px 18px 4px 18px;background:linear-gradient(135deg,#00b4d8,#0077b6);box-shadow:0 3px 11px rgba(0,180,216,.26)}
+.bb.samb{border-radius:18px 18px 18px 4px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1)}
+.rej-flash{position:fixed;inset:0;background:rgba(255,82,82,.09);pointer-events:none;animation:flash .4s ease forwards;z-index:100}
+@keyframes flash{0%{opacity:1}100%{opacity:0}}
+#bottom{flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:8px;padding:7px 18px max(env(safe-area-inset-bottom,13px),13px);z-index:2;width:100%}
+#transcriptEl{font-family:'Space Mono',monospace;font-size:10px;color:rgba(255,255,255,.35);letter-spacing:1px;text-align:center;max-width:270px;min-height:13px}
+#errBox{font-size:11px;color:#ff5252;text-align:center;max-width:270px;padding:6px 12px;border-radius:8px;background:rgba(255,82,82,.07);border:1px solid rgba(255,82,82,.16);display:none}
+#orbWrap{position:relative;width:120px;height:120px;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.ring{position:absolute;width:100%;height:100%;border-radius:50%;border:2px solid var(--c);opacity:0}
+#orbCore{width:96px;height:96px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:all .5s ease}
+#stateLabel{font-family:'Space Mono',monospace;font-size:9px;letter-spacing:3px;color:var(--c);text-transform:uppercase;transition:color .4s}
+#tapHint{font-size:8px;color:rgba(255,255,255,.14);font-family:'Space Mono',monospace;letter-spacing:2px}
+.pill{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);color:rgba(255,255,255,.36);font-size:9px;font-family:'Space Mono',monospace;letter-spacing:2px;padding:4px 12px;border-radius:18px;cursor:pointer;display:none}
+#toast{position:fixed;top:10px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,rgba(0,229,255,.17),rgba(0,229,255,.04));border:1px solid rgba(0,229,255,.38);backdrop-filter:blur(12px);color:#00e5ff;border-radius:22px;padding:6px 16px;font-size:11px;font-family:'Space Mono',monospace;letter-spacing:2px;z-index:500;pointer-events:none;opacity:0;transition:opacity .3s;white-space:nowrap;margin-top:max(env(safe-area-inset-top),6px)}
+#rejectToast{position:fixed;top:10px;left:50%;transform:translateX(-50%);background:rgba(255,82,82,.14);border:1px solid rgba(255,82,82,.38);backdrop-filter:blur(12px);color:#ff5252;border-radius:22px;padding:6px 16px;font-size:11px;font-family:'Space Mono',monospace;letter-spacing:1px;z-index:500;pointer-events:none;opacity:0;transition:opacity .3s;white-space:nowrap;margin-top:max(env(safe-area-inset-top),6px)}
+
+@keyframes gridFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes orbPulse{0%{transform:scale(1);opacity:.7}100%{transform:scale(2.1);opacity:0}}
+@keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+@keyframes speakPulse{from{transform:scale(1)}to{transform:scale(1.05)}}
+@keyframes wakeBreathe{0%,100%{transform:scale(1)}50%{transform:scale(1.03)}}
+@keyframes wakering{0%,100%{transform:scale(1);opacity:.35}50%{transform:scale(1.5);opacity:0}}
+@keyframes dotB{0%,100%{transform:translateY(0);opacity:1}50%{transform:translateY(-5px);opacity:.5}}
+@keyframes barA{from{transform:scaleY(.4);opacity:.6}to{transform:scaleY(1);opacity:1}}
+@keyframes dotPulse{from{opacity:.4}to{opacity:1}}
+</style>
+</head>
+<body>
+
+<!-- SETUP -->
+<div class="screen" id="setupScreen">
+<div class="si">
+  <div class="logo"><h1>SAM</h1><p>Personal Voice Assistant</p></div>
+  <div class="sec">
+    <h3>Names</h3>
+    <div class="fl">Assistant name</div>
+    <input type="text" id="assistantName" placeholder="SAM" maxlength="20"/>
+    <div class="fl" style="margin-top:9px">Your name</div>
+    <input type="text" id="userName" placeholder="e.g. Aryy" maxlength="30"/>
+  </div>
+  <div class="sec">
+    <h3>Personality</h3>
+    <div class="pg" id="pg">
+      <div class="pc sel" data-p="friendly" onclick="selP(this)"><div class="em">😊</div><div class="pn">Friendly</div><div class="pd">Warm & helpful</div></div>
+      <div class="pc" data-p="professional" onclick="selP(this)"><div class="em">💼</div><div class="pn">Professional</div><div class="pd">Formal & precise</div></div>
+      <div class="pc" data-p="funny" onclick="selP(this)"><div class="em">😄</div><div class="pn">Funny</div><div class="pd">Witty & playful</div></div>
+      <div class="pc" data-p="calm" onclick="selP(this)"><div class="em">🧘</div><div class="pn">Calm</div><div class="pd">Zen & soothing</div></div>
+    </div>
+  </div>
+  <div class="sec">
+    <h3>Custom Instructions</h3>
+    <textarea id="customCtx" placeholder="e.g. I'm a student from Ahmedabad. I love cricket and tech."></textarea>
+  </div>
+  <div class="sec">
+    <h3>Voice Style</h3>
+    <div class="vg">
+      <div class="vc sel" data-v="normal" onclick="selV(this)"><div class="vn">Normal</div><div class="vd">Balanced</div></div>
+      <div class="vc" data-v="fast" onclick="selV(this)"><div class="vn">Fast</div><div class="vd">Quick</div></div>
+      <div class="vc" data-v="slow" onclick="selV(this)"><div class="vn">Slow</div><div class="vd">Clear</div></div>
+      <div class="vc" data-v="high" onclick="selV(this)"><div class="vn">High</div><div class="vd">High pitch</div></div>
+      <div class="vc" data-v="deep" onclick="selV(this)"><div class="vn">Deep</div><div class="vd">Low pitch</div></div>
+      <div class="vc" data-v="energetic" onclick="selV(this)"><div class="vn">Energetic</div><div class="vd">Fast+high</div></div>
+    </div>
+  </div>
+  <div class="sec">
+    <h3>Accent Color</h3>
+    <div class="cr">
+      <div class="cd sel" data-col="#00e5ff" style="background:#00e5ff" onclick="selC(this)"></div>
+      <div class="cd" data-col="#ff4081" style="background:#ff4081" onclick="selC(this)"></div>
+      <div class="cd" data-col="#69ff47" style="background:#69ff47" onclick="selC(this)"></div>
+      <div class="cd" data-col="#ffea00" style="background:#ffea00" onclick="selC(this)"></div>
+      <div class="cd" data-col="#b47aff" style="background:#b47aff" onclick="selC(this)"></div>
+      <div class="cd" data-col="#ff8c42" style="background:#ff8c42" onclick="selC(this)"></div>
+    </div>
+  </div>
+  <div class="sec">
+    <div class="lock-row">
+      <div class="lock-info">
+        <h3>Voice Lock 🔒</h3>
+        <p>Only YOUR voice activates SAM.<br/>Others will be rejected silently.</p>
+      </div>
+      <div class="toggle-wrap" onclick="toggleLock()">
+        <div class="toggle-bg" id="tBg"></div>
+        <div class="toggle-thumb" id="tThumb"></div>
+      </div>
+    </div>
+  </div>
+  <button id="startBtn" onclick="startApp()">START SAM ›</button>
+</div>
+</div>
+
+<!-- ENROLL -->
+<div class="screen hidden" id="enrollScreen">
+  <div class="eb">
+    <div>
+      <div style="font-family:'Space Mono',monospace;font-size:9px;letter-spacing:4px;color:rgba(0,229,255,.55);text-transform:uppercase;text-align:center;margin-bottom:10px">Voice Lock Setup</div>
+      <h2>Register Your Voice</h2>
+    </div>
+    <p>SAM will record your voice <strong>3 times</strong>.<br/>Tap the orb and say <strong>"Hey SAM"</strong> each time.</p>
+    <div id="enrollOrb" onclick="doEnroll()">
+      <div class="er" id="er0"></div><div class="er" id="er1"></div><div class="er" id="er2"></div>
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none">
+        <rect x="9" y="2" width="6" height="12" rx="3" fill="white"/>
+        <path d="M5 10a7 7 0 0014 0" stroke="white" stroke-width="2" stroke-linecap="round" fill="none"/>
+        <line x1="12" y1="17" x2="12" y2="21" stroke="white" stroke-width="2" stroke-linecap="round"/>
+        <line x1="8" y1="21" x2="16" y2="21" stroke="white" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div id="enrollStatus">Tap orb → say "Hey SAM" (1/3)</div>
+    <div class="sdots"><div class="sd" id="sd0"></div><div class="sd" id="sd1"></div><div class="sd" id="sd2"></div></div>
+    <button id="skipEnroll" onclick="skipEnroll()">Skip voice lock →</button>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="screen hidden" id="mainScreen">
+  <div id="grid"></div>
+  <div id="header">
+    <div id="lockBadge">🔒 LOCKED</div>
+    <div id="headerLabel">Voice Assistant</div>
+    <div id="headerTitle">SAM</div>
+    <div id="wakeHint">Say <strong style="color:#6fa3d9">"Hey SAM"</strong> to activate</div>
+    <div id="settingsBtn" onclick="openSettings()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="3" stroke="rgba(255,255,255,.55)" stroke-width="2"/>
+        <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="rgba(255,255,255,.55)" stroke-width="2"/>
+      </svg>
+    </div>
+  </div>
+  <div id="chat"></div>
+  <div id="bottom">
+    <div id="transcriptEl"></div>
+    <div id="errBox"></div>
+    <div id="orbWrap" onclick="handleOrbClick()">
+      <div class="ring" id="r0"></div><div class="ring" id="r1"></div><div class="ring" id="r2"></div>
+      <div id="orbCore"><svg id="orbSvg" width="30" height="30" viewBox="0 0 24 24" fill="none"></svg></div>
+    </div>
+    <div id="stateLabel">Say 'Hey SAM'…</div>
+    <div id="tapHint">OR TAP ORB TO SPEAK</div>
+    <button class="pill" id="clearBtn" onclick="clearChat()">CLEAR</button>
+  </div>
+</div>
+
+<div id="toast">👋 Hey! I'm listening…</div>
+<div id="rejectToast">🔒 Wrong voice — SAM locked</div>
+
+<script>
+// ─────────────────────────────────────────────
+const PERS={
+  friendly:"You are warm, caring, and encouraging. Use a conversational tone with occasional light humor.",
+  professional:"You are formal, precise, and efficient. Avoid slang, get straight to the point.",
+  funny:"You are witty and playful. Love light jokes and keeping things fun while being helpful.",
+  calm:"You are serene and soothing. Speak thoughtfully, never rushing, always reassuring."
+};
+const VP={normal:{r:1.05,p:1.1},fast:{r:1.4,p:1.1},slow:{r:.8,p:1.0},high:{r:1.05,p:1.5},deep:{r:.95,p:.7},energetic:{r:1.4,p:1.4}};
+const COLS={wake:"#4a6fa5",listening:"#ff4081",thinking:"#ffea00",speaking:"#69ff47",error:"#ff5252"};
+const LBLS={wake:"Say 'Hey SAM'…",listening:"Listening…",thinking:"Thinking…",speaking:"Speaking…",error:"Error"};
+const THRESHOLD=0.68;
+
+let cfg={},messages=[],appState="wake";
+let wakeReady=false,processing=false,wakeRecog=null,queryRecog=null;
+const synth=window.speechSynthesis;
+let voiceLockEnabled=false,voiceProfile=null,enrollSamples=[],enrollCount=0;
+let selPers="friendly",selVoice="normal",selColor="#00e5ff",lockOn=false;
+let dynWake=["hey sam","hey, sam","ok sam","okay sam","hi sam"];
+
+// ─ SETUP UI ─────────────────────────────────
+function selP(el){document.querySelectorAll(".pc").forEach(c=>c.classList.remove("sel"));el.classList.add("sel");selPers=el.dataset.p;}
+function selV(el){document.querySelectorAll(".vc").forEach(c=>c.classList.remove("sel"));el.classList.add("sel");selVoice=el.dataset.v;}
+function selC(el){document.querySelectorAll(".cd").forEach(c=>c.classList.remove("sel"));el.classList.add("sel");selColor=el.dataset.col;}
+function toggleLock(){
+  lockOn=!lockOn;
+  document.getElementById("tBg").style.background=lockOn?"rgba(0,229,255,.38)":"rgba(255,255,255,.12)";
+  document.getElementById("tThumb").style.left=lockOn?"23px":"3px";
+}
+
+function startApp(){
+  cfg={assistantName:g("assistantName").value.trim()||"SAM",userName:g("userName").value.trim()||"",
+    personality:selPers,voiceStyle:selVoice,accentColor:selColor,
+    customCtx:g("customCtx").value.trim(),voiceLock:lockOn};
+  localStorage.setItem("sam_cfg",JSON.stringify(cfg));
+  if(lockOn&&!voiceProfile){hide("setupScreen");show("enrollScreen");}
+  else launchMain();
+}
+
+function openSettings(){stopAll();loadCfgUI();hide("mainScreen");show("setupScreen");g("startBtn").textContent="SAVE & RESTART ›";}
+
+function loadCfgUI(){
+  if(!cfg.assistantName)return;
+  g("assistantName").value=cfg.assistantName;
+  g("userName").value=cfg.userName||"";
+  g("customCtx").value=cfg.customCtx||"";
+  document.querySelectorAll(".pc").forEach(c=>{if(c.dataset.p===cfg.personality)c.click();});
+  document.querySelectorAll(".vc").forEach(c=>{if(c.dataset.v===cfg.voiceStyle)c.click();});
+  document.querySelectorAll(".cd").forEach(c=>{if(c.dataset.col===cfg.accentColor)c.click();});
+  lockOn=cfg.voiceLock||false;
+  g("tBg").style.background=lockOn?"rgba(0,229,255,.38)":"rgba(255,255,255,.12)";
+  g("tThumb").style.left=lockOn?"23px":"3px";
+}
+
+// ─ VOICE ENROLLMENT ─────────────────────────
+async function doEnroll(){
+  if(enrollCount>=3)return;
+  const dot=g("sd"+enrollCount); dot.classList.add("rec");
+  g("enrollStatus").textContent="Recording… say 'Hey SAM'";
+  [0,1,2].forEach(i=>{const e=g("er"+i);if(e)e.classList.add("act");});
+  try{
+    const feat=await captureFeatures(1600);
+    enrollSamples.push(feat);
+    dot.classList.remove("rec"); dot.classList.add("done");
+    [0,1,2].forEach(i=>{const e=g("er"+i);if(e)e.classList.remove("act");});
+    enrollCount++;
+    if(enrollCount>=3){
+      voiceProfile={rms:avg(enrollSamples.map(s=>s.rms)),centroid:avg(enrollSamples.map(s=>s.centroid)),
+        rmsStd:Math.max(std(enrollSamples.map(s=>s.rms)),0.5),centroidStd:Math.max(std(enrollSamples.map(s=>s.centroid)),1)};
+      localStorage.setItem("sam_vp",JSON.stringify(voiceProfile));
+      voiceLockEnabled=true;
+      g("enrollStatus").textContent="✓ Voice registered!";
+      await sleep(800); launchMain();
+    } else {
+      g("enrollStatus").textContent=`Tap orb → say "Hey SAM" (${enrollCount+1}/3)`;
+    }
+  }catch(e){
+    [0,1,2].forEach(i=>{const e=g("er"+i);if(e)e.classList.remove("act");});
+    dot.classList.remove("rec");
+    g("enrollStatus").textContent="Error — try again";
+  }
+}
+function skipEnroll(){voiceLockEnabled=false;launchMain();}
+
+// ─ AUDIO FEATURES ───────────────────────────
+async function captureFeatures(ms=1200){
+  const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+  const ac=new(window.AudioContext||window.webkitAudioContext)();
+  const an=ac.createAnalyser(); an.fftSize=2048;
+  ac.createMediaStreamSource(stream).connect(an);
+  const n=an.frequencyBinCount,td=new Uint8Array(n),fd=new Uint8Array(n),feats=[];
+  const end=Date.now()+ms;
+  while(Date.now()<end){
+    an.getByteTimeDomainData(td); an.getByteFrequencyData(fd);
+    let s=0; td.forEach(v=>s+=(v-128)**2);
+    const rms=Math.sqrt(s/n);
+    let ws=0,tm=0; fd.forEach((v,i)=>{ws+=v*i;tm+=v;});
+    feats.push({rms,centroid:tm>0?ws/tm:0});
+    await sleep(50);
+  }
+  stream.getTracks().forEach(t=>t.stop()); ac.close();
+  return{rms:avg(feats.map(f=>f.rms)),centroid:avg(feats.map(f=>f.centroid))};
+}
+
+function voiceMatches(live){
+  if(!voiceProfile||!live)return true;
+  const rr=Math.max(voiceProfile.rmsStd*3,1),cr=Math.max(voiceProfile.centroidStd*3,4);
+  const score=1-(Math.abs(live.rms-voiceProfile.rms)/rr+Math.abs(live.centroid-voiceProfile.centroid)/cr)/2;
+  console.log("Voice score:",score.toFixed(2));
+  return Math.max(0,score)>=THRESHOLD;
+}
+
+// ─ LAUNCH MAIN ──────────────────────────────
+function launchMain(){
+  hide("setupScreen"); hide("enrollScreen"); show("mainScreen");
+  document.getElementById("headerTitle").textContent=cfg.assistantName.toUpperCase();
+  document.documentElement.style.setProperty("--c",cfg.accentColor||"#00e5ff");
+  g("wakeHint").innerHTML=`Say <strong style="color:#6fa3d9">"Hey ${cfg.assistantName}"</strong> to activate`;
+  const lb=g("lockBadge"); if(lb)lb.style.display=(voiceLockEnabled&&voiceProfile)?"block":"none";
+  const n=(cfg.assistantName||"sam").toLowerCase();
+  dynWake=[`hey ${n}`,`hey, ${n}`,`okay ${n}`,`ok ${n}`,`hi ${n}`];
+  try{messages=JSON.parse(localStorage.getItem("sam_h_"+cfg.assistantName)||"[]");}catch{messages=[];}
+  renderAll();
+  navigator.mediaDevices.getUserMedia({audio:true})
+    .then(()=>{wakeReady=true;setOrb("wake");startWakeLoop();})
+    .catch(()=>showErr("🎙️ Mic denied. Allow in settings & reload."));
+}
+
+// ─ SYSTEM PROMPT ────────────────────────────
+function prompt(){
+  const n=cfg.assistantName||"SAM",u=cfg.userName?`The user's name is ${cfg.userName}. Address them by name occasionally.`:"";
+  return `You are ${n}, a personal AI voice assistant. ${PERS[cfg.personality]||PERS.friendly} Keep answers concise (2-4 sentences) unless asked for detail. Never say you are Claude or Anthropic. ${u}${cfg.customCtx?"\n\nUser context: "+cfg.customCtx:""}`;
+}
+
+// ─ RENDER ───────────────────────────────────
+function renderAll(){
+  g("chat").innerHTML="";
+  if(!messages.length){const u=cfg.userName?`, ${cfg.userName}`:"";g("chat").innerHTML=`<div class="empty-msg">Hey${u}! Say <strong>"Hey ${cfg.assistantName||"SAM"}"</strong><br/>or tap the orb to start…</div>`;}
+  messages.forEach(addBubble);
+  const cb=g("clearBtn"); if(cb)cb.style.display=messages.length?"inline-block":"none";
+  scrollChat();
+}
+function addBubble(m){
+  const o=document.querySelector(".empty-msg"); if(o)o.remove();
+  const cb=g("clearBtn"); if(cb)cb.style.display="inline-block";
+  const w=document.createElement("div"); w.className="bw "+m.role;
+  const ab=`background:linear-gradient(135deg,${cfg.accentColor||"#00e5ff"},#1a237e)`;
+  const ini=(cfg.assistantName||"S")[0].toUpperCase();
+  w.innerHTML=m.role==="sam"?`<div class="av" style="${ab}">${ini}</div><div class="bb samb">${esc(m.content)}</div>`:`<div class="bb user">${esc(m.content)}</div>`;
+  g("chat").appendChild(w); scrollChat();
+}
+function scrollChat(){const c=g("chat");if(c)c.scrollTop=c.scrollHeight;}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+
+// ─ ORB ──────────────────────────────────────
+function setOrb(s){
+  appState=s;
+  const ac=cfg.accentColor||"#00e5ff",col=COLS[s]||ac,isWake=s==="wake";
+  const sl=g("stateLabel"); if(sl){sl.style.color=col;sl.textContent=LBLS[s]||s;}
+  const wh=g("wakeHint"); if(wh)wh.style.opacity=isWake?"1":"0";
+  const th=g("tapHint"); if(th)th.style.opacity=isWake?"1":"0";
+  const oc=g("orbCore"); if(!oc)return;
+  const d=isWake?"55":"cc";
+  oc.style.background=`radial-gradient(circle at 35% 35%,${col}${d},${col}22)`;
+  oc.style.boxShadow=`0 0 ${isWake?15:32}px ${col}${isWake?"44":"88"},0 0 55px ${col}33,inset 0 0 22px ${col}44`;
+  oc.style.animation=s==="listening"?"breathe 1.2s ease-in-out infinite":s==="speaking"?"speakPulse .5s ease-in-out infinite alternate":s==="wake"?"wakeBreathe 4s ease-in-out infinite":"none";
+  [0,1,2].forEach(i=>{const r=g("r"+i);if(!r)return;r.style.borderColor=col;r.style.animation=(s!=="wake"&&s!=="idle")?`orbPulse 2s ease-out ${i*.6}s infinite`:i===0&&isWake?"wakering 3s ease-in-out infinite":"none";});
+  drawIcon(s,col);
+}
+function drawIcon(s,col){
+  const sv=g("orbSvg"); if(!sv)return;
+  const fc=s==="wake"?col+"99":"white";
+  if(s==="thinking"){sv.innerHTML=`<circle cx="5" cy="12" r="2" fill="white" style="animation:dotB 1s ease-in-out 0s infinite"/><circle cx="12" cy="12" r="2" fill="white" style="animation:dotB 1s ease-in-out .2s infinite"/><circle cx="19" cy="12" r="2" fill="white" style="animation:dotB 1s ease-in-out .4s infinite"/>`;}
+  else if(s==="speaking"){sv.innerHTML=`<rect x="2" y="9" width="2" height="6" rx="1" fill="white" style="animation:barA .6s 0s infinite alternate"/><rect x="6" y="6" width="2" height="12" rx="1" fill="white" style="animation:barA .6s .1s infinite alternate"/><rect x="10" y="4" width="2" height="16" rx="1" fill="white" style="animation:barA .6s .2s infinite alternate"/><rect x="14" y="6" width="2" height="12" rx="1" fill="white" style="animation:barA .6s .3s infinite alternate"/><rect x="18" y="9" width="2" height="6" rx="1" fill="white" style="animation:barA .6s .4s infinite alternate"/>`;}
+  else{sv.innerHTML=`<rect x="9" y="2" width="6" height="12" rx="3" fill="${fc}"/><path d="M5 10a7 7 0 0014 0" stroke="${fc}" stroke-width="2" stroke-linecap="round" fill="none"/><line x1="12" y1="17" x2="12" y2="21" stroke="${fc}" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="21" x2="16" y2="21" stroke="${fc}" stroke-width="2" stroke-linecap="round"/>`;}
+}
+
+// ─ TTS ──────────────────────────────────────
+function speak(text,cb){
+  setOrb("speaking"); synth.cancel();
+  const u=new SpeechSynthesisUtterance(text);
+  const v=VP[cfg.voiceStyle]||VP.normal; u.rate=v.r; u.pitch=v.p;
+  const vs=synth.getVoices(),pv=vs.find(v=>/samantha|karen|victoria|female|zira/i.test(v.name))||vs[0];
+  if(pv)u.voice=pv; u.onend=u.onerror=()=>cb?.(); synth.speak(u);
+}
+
+// ─ CLAUDE ───────────────────────────────────
+async function askClaude(txt){
+  if(processing)return; processing=true; setOrb("thinking");
+  const um={role:"user",content:txt}; messages.push(um); addBubble(um); save();
+  try{
+    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:prompt(),messages:messages.map(m=>({role:m.role==="sam"?"assistant":"user",content:m.content}))})});
+    const d=await res.json(),reply=d.content?.map(c=>c.text||"").join("")||"Sorry, I didn't get that.";
+    const sm={role:"sam",content:reply}; messages.push(sm); addBubble(sm); save();
+    speak(reply,()=>{setOrb("wake");startWakeLoop();});
+  }catch{showErr("Network error.");setTimeout(()=>{hideErr();setOrb("wake");startWakeLoop();},3000);}
+  finally{processing=false;}
+}
+
+// ─ QUERY LISTEN ─────────────────────────────
+function startQueryListen(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition; if(!SR)return;
+  try{queryRecog?.abort();}catch{}
+  const r=new SR(); r.lang="en-US"; r.interimResults=false; r.maxAlternatives=1; queryRecog=r;
+  r.onstart=()=>setOrb("listening");
+  r.onresult=e=>{const t=e.results[0][0].transcript;g("transcriptEl").textContent=`"${t}"`;askClaude(t);};
+  r.onerror=e=>{if(e.error!=="no-speech")showErr("Couldn't hear you.");setTimeout(()=>{hideErr();setOrb("wake");startWakeLoop();},2200);};
+  r.onend=()=>{if(appState==="listening"){setOrb("wake");startWakeLoop();}};
+  r.start();
+}
+
+// ─ WAKE LOOP ────────────────────────────────
+function startWakeLoop(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition; if(!SR||!wakeReady)return;
+  try{wakeRecog?.abort();}catch{}
+  const r=new SR(); r.lang="en-US"; r.continuous=false; r.interimResults=false; r.maxAlternatives=3; wakeRecog=r;
+  r.onresult=async e=>{
+    const heard=Array.from(e.results).flatMap(r=>Array.from(r)).map(a=>a.transcript.toLowerCase().trim());
+    if(!heard.some(h=>dynWake.some(w=>h.includes(w))))return;
+    // voice lock check
+    if(voiceLockEnabled&&voiceProfile){
+      try{wakeRecog?.abort();}catch{}
+      const live=await captureFeatures(1200);
+      if(!voiceMatches(live)){flashRed();showRejectToast();setTimeout(()=>{if(appState==="wake")startWakeLoop();},1600);return;}
+    }
+    // accepted
+    try{wakeRecog?.abort();}catch{}
+    showToast(); synth.cancel();
+    const ack=new SpeechSynthesisUtterance("Mm-hmm?");
+    const v=VP[cfg.voiceStyle]||VP.normal; ack.rate=v.r*1.1; ack.pitch=v.p; ack.volume=0.7;
+    const vs=synth.getVoices(),pv=vs.find(v=>/samantha|karen|victoria|female|zira/i.test(v.name))||vs[0];
+    if(pv)ack.voice=pv; ack.onend=ack.onerror=()=>startQueryListen(); synth.speak(ack);
+  };
+  r.onend=()=>{if(appState==="wake")setTimeout(()=>{if(appState==="wake")startWakeLoop();},300);};
+  try{r.start();}catch{}
+}
+
+// ─ ORB CLICK ────────────────────────────────
+function handleOrbClick(){
+  if(appState==="wake"){try{wakeRecog?.abort();}catch{}startQueryListen();}
+  else if(appState==="listening"){try{queryRecog?.abort();}catch{}setOrb("wake");startWakeLoop();}
+  else if(appState==="speaking"){synth.cancel();setOrb("wake");startWakeLoop();}
+}
+
+// ─ UTILS ────────────────────────────────────
+function g(id){return document.getElementById(id);}
+function show(id){g(id).classList.remove("hidden");}
+function hide(id){g(id).classList.add("hidden");}
+function showErr(m){const e=g("errBox");if(e){e.textContent=m;e.style.display="block";}}
+function hideErr(){const e=g("errBox");if(e)e.style.display="none";}
+function stopAll(){synth.cancel();try{wakeRecog?.abort();}catch{}try{queryRecog?.abort();}catch{}wakeReady=false;}
+function clearChat(){messages=[];save();renderAll();}
+function save(){try{localStorage.setItem("sam_h_"+(cfg.assistantName||"SAM"),JSON.stringify(messages.slice(-60)));}catch{}}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+function avg(a){return a.reduce((s,v)=>s+v,0)/a.length;}
+function std(a){const m=avg(a);return Math.sqrt(avg(a.map(v=>(v-m)**2)));}
+let tT,rT;
+function showToast(){const t=g("toast");if(!t)return;t.style.opacity="1";clearTimeout(tT);tT=setTimeout(()=>t.style.opacity="0",2400);}
+function showRejectToast(){const t=g("rejectToast");if(!t)return;t.style.opacity="1";clearTimeout(rT);rT=setTimeout(()=>t.style.opacity="0",2000);}
+function flashRed(){const f=document.createElement("div");f.className="rej-flash";document.body.appendChild(f);setTimeout(()=>f.remove(),500);}
+
+// ─ BOOT ─────────────────────────────────────
+(function(){
+  try{cfg=JSON.parse(localStorage.getItem("sam_cfg")||"{}");}catch{cfg={};}
+  try{voiceProfile=JSON.parse(localStorage.getItem("sam_vp")||"null");}catch{voiceProfile=null;}
+  voiceLockEnabled=!!(cfg.voiceLock&&voiceProfile);
+  if(cfg.assistantName){loadCfgUI();launchMain();}
+})();
+if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+if(synth.onvoiceschanged!==undefined)synth.onvoiceschanged=()=>{};
+</script>
+</body>
+</html>
