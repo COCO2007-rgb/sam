@@ -126,10 +126,10 @@ textarea{height:68px;line-height:1.5}
     <input type="text" id="userName" placeholder="e.g. Aryy" maxlength="30"/>
   </div>
   <div class="sec">
-    <h3>🔑 Anthropic API Key</h3>
-    <div class="fl">Get yours free at <strong style="color:#00e5ff">console.anthropic.com</strong></div>
-    <input type="text" id="apiKey" placeholder="sk-ant-..." autocomplete="off" spellcheck="false"/>
-    <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:6px;line-height:1.5">Stored only on your device. Never shared.</div>
+    <h3>🔑 Groq API Key (Free)</h3>
+    <div class="fl">Get yours free at <strong style="color:#00e5ff">console.groq.com</strong> → API Keys</div>
+    <input type="text" id="apiKey" placeholder="gsk_..." autocomplete="off" spellcheck="false"/>
+    <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:6px;line-height:1.5">100% free. Stored only on your device.</div>
   </div>
   <div class="sec">
     <h3>Personality</h3>
@@ -511,70 +511,72 @@ async function processCommand(txt){
 }
 
 async function askClaude(txt){
-  console.log("🤖 [CLAUDE] askClaude() | online:", navigator.onLine, "| text:", `"${txt}"`);
-  if(processing){ console.warn("⚠️ [CLAUDE] Already processing"); return; }
+  console.log("🤖 [AI] askClaude() | online:", navigator.onLine, "| text:", `"${txt}"`);
+  if(processing){ console.warn("⚠️ [AI] Already processing"); return; }
 
-  // check API key
-  const apiKey=cfg.apiKey||"";
+  const apiKey=(cfg.apiKey||"").trim();
   if(!apiKey){
-    console.error("❌ [CLAUDE] No API key set!");
-    const reply="I need an API key to answer that. Please add your Anthropic API key in settings.";
+    const reply="Please add your Groq API key in settings to chat with me!";
     addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
     speak(reply,()=>{setOrb("wake");startWakeLoop();}); return;
   }
 
-  // offline fallback
   if(!navigator.onLine){
-    console.warn("📴 [CLAUDE] No internet — using offline fallback");
-    const reply="I'm offline right now. I can still tell you the time, date, or make calls. Ask me anything simple!";
+    const reply="I'm offline. I can tell you the time, date, or make calls!";
     addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
     speak(reply,()=>{setOrb("wake");startWakeLoop();}); return;
   }
 
   processing=true; setOrb("thinking");
   const um={role:"user",content:txt}; messages.push(um); addBubble(um); save();
-  console.log("📤 [CLAUDE] Sending request | history:", messages.length, "messages");
+  console.log("📤 [AI] Calling Groq API (free)...");
 
   try{
-    const res=await fetch("https://api.anthropic.com/v1/messages",{
+    const res=await fetch("https://api.groq.com/openai/v1/chat/completions",{
       method:"POST",
       headers:{
         "Content-Type":"application/json",
-        "x-api-key": apiKey,
-        "anthropic-version":"2023-06-01",
-        "anthropic-dangerous-direct-browser-access":"true"
+        "Authorization":"Bearer "+apiKey
       },
       body:JSON.stringify({
-        model:"claude-haiku-4-5-20251001",
+        model:"llama3-8b-8192",
         max_tokens:300,
-        system:prompt(),
-        messages:messages.filter(m=>m.role==="user"||m.role==="sam")
-          .map(m=>({role:m.role==="sam"?"assistant":"user",content:m.content}))
+        messages:[
+          {role:"system", content:prompt()},
+          ...messages
+            .filter(m=>m.role==="user"||m.role==="sam")
+            .slice(-10)
+            .map(m=>({role:m.role==="sam"?"assistant":"user", content:m.content}))
+        ]
       })
     });
-    console.log("📥 [CLAUDE] Status:", res.status, res.statusText);
+    console.log("📥 [AI] Groq status:", res.status, res.statusText);
     const d=await res.json();
-    console.log("📥 [CLAUDE] Body:", JSON.stringify(d).slice(0,300));
+    console.log("📥 [AI] Groq body:", JSON.stringify(d).slice(0,300));
+
     if(d.error){
-      console.error("❌ [CLAUDE] API error:", d.error.type, "-", d.error.message);
-      const reply=d.error.type==="authentication_error"
-        ?"My API key seems wrong. Please check it in settings."
+      console.error("❌ [AI] Groq error:", d.error.message);
+      const isAuth=d.error.message?.toLowerCase().includes("auth")||d.error.message?.toLowerCase().includes("key")||res.status===401;
+      const reply=isAuth
+        ?"My API key looks wrong. Please go to Settings and paste your Groq key again."
         :"Something went wrong: "+d.error.message;
       addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
       speak(reply,()=>{setOrb("wake");startWakeLoop();}); return;
     }
-    const reply=d.content?.map(c=>c.text||"").join("")||"Sorry, I didn't get that.";
-    console.log("✅ [CLAUDE] Reply:", reply.slice(0,100));
+
+    const reply=d.choices?.[0]?.message?.content||"Sorry, I didn't get that.";
+    console.log("✅ [AI] Reply:", reply.slice(0,100));
     const sm={role:"sam",content:reply}; messages.push(sm); addBubble(sm); save();
     speak(reply,()=>{setOrb("wake");startWakeLoop();});
+
   }catch(e){
-    console.error("❌ [CLAUDE] fetch failed:", e.name, e.message);
+    console.error("❌ [AI] fetch failed:", e.name, e.message);
     const reply="Network error. Check your internet connection.";
     addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
     speak(reply,()=>{setOrb("wake");startWakeLoop();});
   }finally{
     processing=false;
-    console.log("🏁 [CLAUDE] Done");
+    console.log("🏁 [AI] Done");
   }
 }
 
