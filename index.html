@@ -250,18 +250,44 @@ const COLS={wake:"#4a6fa5",listening:"#ff4081",thinking:"#ffea00",speaking:"#69f
 const LBLS={wake:"Say 'Hey SAM'…",listening:"Listening…",thinking:"Thinking…",speaking:"Speaking…",error:"Error"};
 const THRESHOLD=0.68;
 
-// ── CONTACTS — add your contacts here ──────────
-// Format: { name: "display name", phone: "number" }
-const CONTACTS=[
-  {name:"daddy",   phone:"+919999999999"},  // ← replace with real number
-  {name:"mom",     phone:"+919999999998"},
-  {name:"brother", phone:"+919999999997"},
-  // add more contacts here...
-];
+// ── CONTACTS — loaded live from phone via Contacts API ──────────
+// No manual entry needed! SAM reads your phone contacts directly.
+let deviceContacts=[]; // cached after first permission grant
+
+async function loadContacts(){
+  // Use Contact Picker API (supported on Android Chrome)
+  if(!("contacts" in navigator&&"ContactsManager" in window)){
+    console.warn("⚠️ [CONTACTS] Contact Picker API not supported on this browser/device");
+    return null;
+  }
+  try{
+    const props=["name","tel"];
+    const opts={multiple:true};
+    const results=await navigator.contacts.select(props,opts);
+    deviceContacts=results.filter(c=>c.tel&&c.tel.length>0);
+    console.log("✅ [CONTACTS] Loaded",deviceContacts.length,"contacts from device");
+    return deviceContacts;
+  }catch(e){
+    console.error("❌ [CONTACTS] Failed to load contacts:",e.message);
+    return null;
+  }
+}
+
+function findContacts(who){
+  // search cached contacts by name fuzzy match
+  const q=who.toLowerCase().replace(/[^a-z0-9 ]/g,"");
+  return deviceContacts.filter(c=>{
+    const name=(c.name[0]||"").toLowerCase().replace(/[^a-z0-9 ]/g,"");
+    return name.includes(q)||q.includes(name)||
+      name.split(" ").some(w=>q.includes(w)&&w.length>1)||
+      q.split(" ").some(w=>name.includes(w)&&w.length>1);
+  });
+}
 
 let cfg={},messages=[],appState="wake";
 let wakeReady=false,processing=false,wakeRecog=null,queryRecog=null;
-let wakeLoopLock=false; // prevents infinite restart loop
+let wakeLoopLock=false;
+let pendingCallNumbers=null; // stores contacts when disambiguation needed
 const synth=window.speechSynthesis;
 let voiceLockEnabled=false,voiceProfile=null,enrollSamples=[],enrollCount=0;
 let selPers="friendly",selVoice="normal",selColor="#00e5ff",lockOn=false;
@@ -469,44 +495,189 @@ function speak(text,cb){
   console.log("🚀 [TTS] synth.speak() called | synth.speaking:", synth.speaking, "| synth.pending:", synth.pending);
 }
 
-// ─ PROCESS COMMAND (calls, offline, or Claude) ──────────────────────
+// ─ PROCESS COMMAND ──────────────────────────────────────────────────
 async function processCommand(txt){
-  console.log("⚡ [CMD] processCommand:", `"${txt}"`);
+  console.log("⚡ [CMD]:", txt);
   const lower=txt.toLowerCase().trim();
 
-  // ── 1. CALL COMMAND ────────────────────────────────────────────────
+  // helper
+  function samSay(reply, action){
+    addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
+    speak(reply,()=>{ action?.(); setOrb("wake"); startWakeLoop(); });
+  }
+
+  // ── 1. CALL ───────────────────────────────────────────────────────
   const callMatch=lower.match(/^(?:call|phone|dial|ring)\s+(.+)$/i);
   if(callMatch){
     const who=callMatch[1].trim().toLowerCase();
-    console.log("📞 [CMD] Call intent detected — looking for:", who);
-    const contact=CONTACTS.find(c=>who.includes(c.name.toLowerCase())||c.name.toLowerCase().includes(who));
-    if(contact){
-      console.log("📞 [CMD] Found contact:", contact.name, contact.phone);
-      const reply=`Calling ${contact.name} now!`;
-      addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
-      speak(reply,()=>{
-        setTimeout(()=>{ window.location.href="tel:"+contact.phone; },600);
-        setOrb("wake"); startWakeLoop();
-      });
-      return;
-    } else {
-      const reply=`I don't have ${who}'s number saved. You can add contacts in the app code.`;
-      console.log("📞 [CMD] Contact not found");
-      addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
-      speak(reply,()=>{setOrb("wake");startWakeLoop();}); return;
+    console.log("📞 [CMD] Call intent for:", who);
+
+    async function doCall(){
+      // load contacts if not yet loaded
+      if(deviceContacts.length===0){
+        samSay("Let me access your contacts first.");
+        const loaded=await loadContacts();
+        if(!loaded||loaded.length===0){
+          // Contacts API not supported — fallback to tel: directly
+          samSay(`Dialling ${who} now!`,()=>setTimeout(()=>window.location.href="tel:"+encodeURIComponent(who),700));
+          return;
+        }
+      }
+
+      const matches=findContacts(who);
+      console.log("📞 [CMD] Matches found:", matches.length, matches.map(c=>c.name[0]));
+
+      if(matches.length===0){
+        samSay(`I could not find ${who} in your contacts. Please check the name and try again.`);
+      } else if(matches.length===1){
+        const name=matches[0].name[0];
+        const numbers=matches[0].tel;
+        if(numbers.length===1){
+          // single contact, single number — call directly no confirmation
+          samSay(`Calling ${name}!`,()=>setTimeout(()=>window.location.href="tel:"+numbers[0],700));
+        } else {
+          // one contact but multiple numbers — ask which one
+          const numList=numbers.map((n,i)=>`${i+1}: ${n}`).join(", ");
+          samSay(`${name} has ${numbers.length} numbers: ${numList}. Say the number like "call number 1" or "call number 2".`);
+          // store pending call so user can say "call number 1"
+          pendingCallNumbers={name,numbers};
+        }
+      } else {
+        // multiple contacts matched — ask which one
+        const nameList=matches.map((c,i)=>`${i+1}: ${c.name[0]}`).join(", ");
+        samSay(`I found ${matches.length} contacts: ${nameList}. Say the number like "call number 1".`);
+        pendingCallNumbers={name:who,numbers:matches.map(c=>({label:c.name[0],number:c.tel[0]}))};
+      }
     }
+    doCall();
+    return;
   }
 
-  // ── 2. OFFLINE ANSWERS ─────────────────────────────────────────────
+  // handle "call number X" for pending disambiguation
+  const numSelectMatch=lower.match(/^(?:call|dial|number)\s+(\d+)$/i);
+  if(numSelectMatch&&pendingCallNumbers){
+    const idx=parseInt(numSelectMatch[1])-1;
+    const p=pendingCallNumbers;
+    if(idx>=0&&idx<p.numbers.length){
+      const num=typeof p.numbers[idx]==="object"?p.numbers[idx].number:p.numbers[idx];
+      const label=typeof p.numbers[idx]==="object"?p.numbers[idx].label:p.name;
+      pendingCallNumbers=null;
+      samSay(`Calling ${label}!`,()=>setTimeout(()=>window.location.href="tel:"+num,700));
+    } else {
+      samSay(`I only have ${p.numbers.length} options. Say a number between 1 and ${p.numbers.length}.`);
+    }
+    return;
+  }
+
+  // ── 2. OPEN WEBSITE / APP ─────────────────────────────────────────
+  const SITES={
+    "youtube":"https://youtube.com","whatsapp":"https://web.whatsapp.com",
+    "instagram":"https://instagram.com","facebook":"https://facebook.com",
+    "twitter":"https://twitter.com","x":"https://x.com",
+    "google":"https://google.com","gmail":"https://mail.google.com",
+    "maps":"https://maps.google.com","google maps":"https://maps.google.com",
+    "amazon":"https://amazon.in","flipkart":"https://flipkart.com",
+    "netflix":"https://netflix.com","spotify":"https://open.spotify.com",
+    "github":"https://github.com","wikipedia":"https://wikipedia.org",
+    "news":"https://news.google.com","cricket":"https://cricbuzz.com",
+    "chatgpt":"https://chat.openai.com","translate":"https://translate.google.com",
+  };
+  const openMatch=lower.match(/^(?:open|launch|go to|take me to|show me)\s+(.+)$/i);
+  if(openMatch){
+    const what=openMatch[1].trim().toLowerCase();
+    const url=SITES[what]||("https://"+what.replace(/\s+/g,"")+".com");
+    samSay(`Opening ${what}!`,()=>setTimeout(()=>window.open(url,"_blank"),700));
+    return;
+  }
+
+  // ── 3. GOOGLE SEARCH ─────────────────────────────────────────────
+  const searchMatch=lower.match(/^(?:search|search for|google|look up|find)\s+(.+)$/i);
+  if(searchMatch){
+    const query=searchMatch[1].trim();
+    samSay(`Searching for "${query}"!`,()=>setTimeout(()=>window.open("https://www.google.com/search?q="+encodeURIComponent(query),"_blank"),700));
+    return;
+  }
+
+  // ── 4. WEATHER ───────────────────────────────────────────────────
+  const weatherMatch=lower.match(/weather(?:\s+in\s+(.+))?/i);
+  if(weatherMatch){
+    const city=weatherMatch[1]?.trim()||"";
+    const url=city?"https://wttr.in/"+encodeURIComponent(city)+"?format=3":"https://wttr.in/?format=3";
+    samSay(`Checking weather${city?" in "+city:""}...`);
+    fetch(url).then(r=>r.text()).then(t=>{
+      const reply=t.trim()||"Could not get weather right now.";
+      addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
+      speak(reply,()=>{setOrb("wake");startWakeLoop();});
+    }).catch(()=>{
+      const r="Could not fetch weather. Check internet.";
+      addBubble({role:"sam",content:r}); messages.push({role:"sam",content:r}); save();
+      speak(r,()=>{setOrb("wake");startWakeLoop();});
+    });
+    return;
+  }
+
+  // ── 5. ALARM / REMINDER ──────────────────────────────────────────
+  const alarmMatch=lower.match(/(?:set (?:an? )?alarm|wake me(?: up)?|remind me)(?:\s+(?:at|for|in))?\s+(.+)/i);
+  if(alarmMatch){
+    const timeStr=alarmMatch[2]?.trim()||"";
+    const inMin=timeStr.match(/in\s+(\d+)\s+min/i);
+    const inHr=timeStr.match(/in\s+(\d+)\s+hour/i);
+    let ms=0,label="";
+    if(inMin){ms=parseInt(inMin[1])*60000;label=inMin[1]+" minutes";}
+    else if(inHr){ms=parseInt(inHr[1])*3600000;label=inHr[1]+(parseInt(inHr[1])>1?" hours":" hour");}
+    if(ms>0){
+      samSay(`Alarm set for ${label} from now!`);
+      setTimeout(()=>{
+        const r="Time is up! Your alarm is ringing!";
+        addBubble({role:"sam",content:r}); messages.push({role:"sam",content:r}); save();
+        speak(r,()=>{setOrb("wake");startWakeLoop();});
+        if(navigator.vibrate)navigator.vibrate([500,200,500,200,500]);
+      },ms); return;
+    }
+    const atTime=timeStr.match(/(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+    if(atTime){
+      let h=parseInt(atTime[1]),m=parseInt(atTime[2]||0);
+      const ap=atTime[3]?.toLowerCase();
+      if(ap==="pm"&&h!==12)h+=12; if(ap==="am"&&h===12)h=0;
+      const target=new Date(); target.setHours(h,m,0,0);
+      if(target<=new Date())target.setDate(target.getDate()+1);
+      const tl=`${h%12||12}:${String(m).padStart(2,"0")} ${h>=12?"PM":"AM"}`;
+      samSay(`Alarm set for ${tl}!`);
+      setTimeout(()=>{
+        const r=`It is ${tl}! Your alarm is ringing!`;
+        addBubble({role:"sam",content:r}); messages.push({role:"sam",content:r}); save();
+        speak(r,()=>{setOrb("wake");startWakeLoop();});
+        if(navigator.vibrate)navigator.vibrate([500,200,500,200,500]);
+      },target-new Date()); return;
+    }
+    samSay('Try saying "set alarm in 10 minutes" or "set alarm at 7 AM".');
+    return;
+  }
+
+  // ── 6. BATTERY ───────────────────────────────────────────────────
+  if(lower.includes("battery")||lower.includes("charge")){
+    if(navigator.getBattery){
+      navigator.getBattery().then(b=>{
+        const pct=Math.round(b.level*100);
+        samSay(`Battery is at ${pct}%${b.charging?", and it is charging.":"."}`);
+      });
+    } else { samSay("Sorry, I cannot read battery on this device."); }
+    return;
+  }
+
+  // ── 7. TIME / DATE ────────────────────────────────────────────────
+  if(lower.includes("what time")||lower==="time"){
+    samSay("It is "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})); return;
+  }
+  if(lower.includes("what day")||lower.includes("what date")||lower.includes("today")){
+    samSay("Today is "+new Date().toLocaleDateString([],{weekday:"long",year:"numeric",month:"long",day:"numeric"})); return;
+  }
+
+  // ── 8. OFFLINE BASICS ────────────────────────────────────────────
   const offlineKey=Object.keys(OFFLINE_ANSWERS).find(k=>lower.includes(k));
-  if(offlineKey&&!navigator.onLine){
-    console.log("📴 [CMD] Offline mode — using built-in answer for:", offlineKey);
-    const reply=OFFLINE_ANSWERS[offlineKey]();
-    addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
-    speak(reply,()=>{setOrb("wake");startWakeLoop();}); return;
-  }
+  if(offlineKey&&!navigator.onLine){ samSay(OFFLINE_ANSWERS[offlineKey]()); return; }
 
-  // ── 3. CLAUDE API ──────────────────────────────────────────────────
+  // ── 9. AI ─────────────────────────────────────────────────────────
   await askClaude(txt);
 }
 
@@ -529,42 +700,117 @@ async function askClaude(txt){
 
   processing=true; setOrb("thinking");
   const um={role:"user",content:txt}; messages.push(um); addBubble(um); save();
-  console.log("📤 [AI] Calling Groq API (free)...");
+
+  // detect if query needs real-time info
+  const needsWeb=/(score|match|live|today|news|weather|result|winner|won|lost|latest|current|right now|price|stock|trending|who is|who won|which team|ipl|cricket|football|fifa|nba|f1|grand prix|election|update)/i.test(txt);
+  console.log("📤 [AI] Calling Groq | needsWebSearch:", needsWeb);
+
+  const todayStr=new Date().toLocaleDateString("en-IN",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+  const systemWithDate=prompt()+`\n\nToday is ${todayStr}. You have access to web search — use it for any real-time questions like scores, news, prices, weather, results. Always search before saying you don't know.`;
 
   try{
+    // Step 1: call with web_search tool enabled
+    const body={
+      model:"llama-3.3-70b-versatile",
+      max_tokens:500,
+      messages:[
+        {role:"system", content:systemWithDate},
+        ...messages
+          .filter(m=>m.role==="user"||m.role==="sam")
+          .slice(-10)
+          .map(m=>({role:m.role==="sam"?"assistant":"user", content:m.content}))
+      ]
+    };
+
+    // add web search tool if query likely needs it
+    if(needsWeb){
+      body.tools=[{
+        type:"function",
+        function:{
+          name:"web_search",
+          description:"Search the web for real-time information like cricket scores, news, match results, prices, weather.",
+          parameters:{
+            type:"object",
+            properties:{query:{type:"string",description:"The search query"}},
+            required:["query"]
+          }
+        }
+      }];
+      body.tool_choice="auto";
+    }
+
     const res=await fetch("https://api.groq.com/openai/v1/chat/completions",{
       method:"POST",
-      headers:{
-        "Content-Type":"application/json",
-        "Authorization":"Bearer "+apiKey
-      },
-      body:JSON.stringify({
-        model:"llama-3.3-70b-versatile",
-        max_tokens:300,
-        messages:[
-          {role:"system", content:prompt()},
-          ...messages
-            .filter(m=>m.role==="user"||m.role==="sam")
-            .slice(-10)
-            .map(m=>({role:m.role==="sam"?"assistant":"user", content:m.content}))
-        ]
-      })
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+apiKey},
+      body:JSON.stringify(body)
     });
-    console.log("📥 [AI] Groq status:", res.status, res.statusText);
+    console.log("📥 [AI] Groq status:", res.status);
     const d=await res.json();
-    console.log("📥 [AI] Groq body:", JSON.stringify(d).slice(0,300));
+    console.log("📥 [AI] Groq body:", JSON.stringify(d).slice(0,400));
 
     if(d.error){
-      console.error("❌ [AI] Groq error:", d.error.message);
-      const isAuth=d.error.message?.toLowerCase().includes("auth")||d.error.message?.toLowerCase().includes("key")||res.status===401;
-      const reply=isAuth
-        ?"My API key looks wrong. Please go to Settings and paste your Groq key again."
-        :"Something went wrong: "+d.error.message;
+      const isAuth=res.status===401||d.error.message?.toLowerCase().includes("auth")||d.error.message?.toLowerCase().includes("key");
+      const reply=isAuth?"My API key looks wrong. Please go to Settings and paste your Groq key again.":"Error: "+d.error.message;
       addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
       speak(reply,()=>{setOrb("wake");startWakeLoop();}); return;
     }
 
-    const reply=d.choices?.[0]?.message?.content||"Sorry, I didn't get that.";
+    const choice=d.choices?.[0];
+
+    // Step 2: if model wants to search — do the search via DuckDuckGo then re-ask
+    if(choice?.finish_reason==="tool_calls"&&choice?.message?.tool_calls?.length>0){
+      const toolCall=choice.message.tool_calls[0];
+      const searchQuery=JSON.parse(toolCall.function.arguments).query;
+      console.log("🔍 [AI] Web search requested for:", searchQuery);
+
+      // fetch search results from DuckDuckGo instant answer API (no key needed)
+      let searchResult="No results found.";
+      try{
+        const ddgRes=await fetch("https://api.duckduckgo.com/?q="+encodeURIComponent(searchQuery)+"&format=json&no_html=1&skip_disambig=1");
+        const ddgData=await ddgRes.json();
+        // extract best answer
+        searchResult=ddgData.AbstractText||ddgData.Answer||
+          (ddgData.RelatedTopics?.[0]?.Text)||
+          (ddgData.Results?.[0]?.Text)||
+          "No instant answer found — latest results may not be available yet.";
+        console.log("🔍 [AI] Search result:", searchResult.slice(0,200));
+      }catch(se){
+        console.warn("⚠️ [AI] Search fetch failed:", se.message);
+        // fallback: try wttr for weather, cricbuzz text for cricket
+        if(/weather/i.test(searchQuery)){
+          try{
+            const city=searchQuery.replace(/weather\s*(in|at|for)?/i,"").trim()||"";
+            const wr=await fetch("https://wttr.in/"+(city?""+encodeURIComponent(city):"")+"?format=3");
+            searchResult=await wr.text();
+          }catch{}
+        }
+      }
+
+      // Step 3: re-ask Groq with search results injected
+      const res2=await fetch("https://api.groq.com/openai/v1/chat/completions",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Authorization":"Bearer "+apiKey},
+        body:JSON.stringify({
+          model:"llama-3.3-70b-versatile",
+          max_tokens:400,
+          messages:[
+            {role:"system",content:systemWithDate},
+            ...messages.filter(m=>m.role==="user"||m.role==="sam").slice(-8)
+              .map(m=>({role:m.role==="sam"?"assistant":"user",content:m.content})),
+            {role:"assistant",content:null,tool_calls:[toolCall]},
+            {role:"tool",tool_call_id:toolCall.id,content:searchResult}
+          ]
+        })
+      });
+      const d2=await res2.json();
+      console.log("📥 [AI] Final answer body:", JSON.stringify(d2).slice(0,300));
+      const reply2=d2.choices?.[0]?.message?.content||"Sorry, I could not find that information.";
+      const sm2={role:"sam",content:reply2}; messages.push(sm2); addBubble(sm2); save();
+      speak(reply2,()=>{setOrb("wake");startWakeLoop();}); return;
+    }
+
+    // normal text reply
+    const reply=choice?.message?.content||"Sorry, I did not get that.";
     console.log("✅ [AI] Reply:", reply.slice(0,100));
     const sm={role:"sam",content:reply}; messages.push(sm); addBubble(sm); save();
     speak(reply,()=>{setOrb("wake");startWakeLoop();});
