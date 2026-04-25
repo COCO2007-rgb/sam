@@ -649,95 +649,111 @@ function startQueryListen(){
 }
 
 // ─ WAKE LOOP ────────────────────────────────
-let wakeLoopStarting=false; // guard against overlapping starts
-function startWakeLoop(){
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){ console.error("❌ [WAKE] SpeechRecognition not supported"); return; }
-  if(!wakeReady){ console.warn("⚠️ [WAKE] wakeReady=false, skipping"); return; }
-  if(appState!=="wake"){ console.warn("⚠️ [WAKE] appState="+appState+", not starting wake loop"); return; }
-  if(wakeLoopStarting){ console.warn("⚠️ [WAKE] Already starting, skipping duplicate call"); return; }
+// Uses a single shared token to prevent duplicate/racing restarts
+let wakeToken=0;
 
-  wakeLoopStarting=true;
-  console.log("👂 [WAKE] startWakeLoop() — dynWake:", dynWake);
-
-  // cleanly stop old one without triggering its onend restart
+function killWakeRecog(){
   if(wakeRecog){
-    console.log("🛑 [WAKE] Stopping old wakeRecog");
-    wakeRecog.onend=null; // prevent onend from firing restart
+    console.log("🛑 [WAKE] Killing wakeRecog");
+    wakeRecog.onstart=null;
+    wakeRecog.onresult=null;
     wakeRecog.onerror=null;
-    try{ wakeRecog.abort(); }catch(e){ console.warn("⚠️ [WAKE] abort() error:", e.message); }
+    wakeRecog.onend=null;
+    try{ wakeRecog.abort(); }catch{}
     wakeRecog=null;
   }
+}
+
+function startWakeLoop(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ console.error("❌ [WAKE] SpeechRecognition not supported in this browser"); return; }
+  if(!wakeReady){ console.warn("⚠️ [WAKE] wakeReady=false, not starting"); return; }
+  if(appState!=="wake"){ console.warn("⚠️ [WAKE] Skipping — appState is:", appState); return; }
+
+  // issue a new token — any old pending restart with an old token will be ignored
+  const myToken=++wakeToken;
+  console.log("👂 [WAKE] startWakeLoop() token="+myToken+" | wake words:", dynWake);
+
+  killWakeRecog(); // cleanly stop previous instance
 
   const r=new SR();
   r.lang="en-US"; r.continuous=false; r.interimResults=false; r.maxAlternatives=3;
   wakeRecog=r;
-  wakeLoopStarting=false;
 
-  r.onstart=()=>console.log("▶️ [WAKE] Recognition started — waiting for wake word");
+  r.onstart=()=>console.log("▶️ [WAKE] Mic open, waiting for wake word (token="+myToken+")");
   r.onaudiostart=()=>console.log("🔊 [WAKE] Audio capture started");
   r.onaudioend=()=>console.log("🔕 [WAKE] Audio capture ended");
 
   r.onresult=async e=>{
+    if(myToken!==wakeToken){ console.log("🗑️ [WAKE] Stale token, ignoring result"); return; }
     const heard=Array.from(e.results).flatMap(r=>Array.from(r)).map(a=>a.transcript.toLowerCase().trim());
     console.log("👂 [WAKE] Heard:", heard);
     const triggered=heard.some(h=>dynWake.some(w=>h.includes(w)));
-    console.log("🔍 [WAKE] Wake word triggered?", triggered);
-    if(!triggered){ console.log("🚫 [WAKE] No match — ignoring"); return; }
+    if(!triggered){ console.log("🚫 [WAKE] No wake word match"); return; }
+    console.log("✅ [WAKE] Wake word matched!");
 
-    // stop wake loop cleanly before acting
-    wakeRecog.onend=null; wakeRecog.onerror=null;
-    try{ wakeRecog.abort(); }catch{}
-    wakeRecog=null;
+    // prevent onend from restarting
+    wakeToken++; // invalidate current token
+    killWakeRecog();
 
     // voice lock check
     if(voiceLockEnabled&&voiceProfile){
-      console.log("🔒 [WAKE] Checking voice lock...");
+      console.log("🔒 [WAKE] Running voice lock check...");
       const live=await captureFeatures(1200);
-      console.log("📊 [WAKE] Live features:", live);
-      const matched=voiceMatches(live);
-      if(!matched){
-        console.warn("🚫 [WAKE] Voice REJECTED");
+      console.log("📊 [WAKE] Voice features:", live);
+      if(!voiceMatches(live)){
+        console.warn("🚫 [WAKE] Voice REJECTED — wrong speaker");
         flashRed(); showRejectToast();
-        setTimeout(()=>startWakeLoop(), 1800);
+        setTimeout(()=>startWakeLoop(), 2000);
         return;
       }
       console.log("✅ [WAKE] Voice ACCEPTED");
     }
 
-    console.log("🟢 [WAKE] Activating SAM — playing ack");
+    // acknowledge and listen
+    console.log("🟢 [WAKE] Waking SAM up...");
     showToast(); synth.cancel();
     const ack=new SpeechSynthesisUtterance("Mm-hmm?");
     const v=VP[cfg.voiceStyle]||VP.normal; ack.rate=v.r*1.1; ack.pitch=v.p; ack.volume=0.7;
-    const vs=synth.getVoices(), pv=vs.find(v=>/samantha|karen|victoria|female|zira/i.test(v.name))||vs[0];
+    const vs=synth.getVoices();
+    const pv=vs.find(v=>/samantha|karen|victoria|female|zira/i.test(v.name))||vs[0];
     if(pv){ ack.voice=pv; console.log("🔊 [WAKE] Ack voice:", pv.name); }
-    ack.onend=()=>{ console.log("🎙️ [WAKE] Ack done → startQueryListen"); startQueryListen(); };
-    ack.onerror=()=>{ console.warn("⚠️ [WAKE] Ack TTS failed → startQueryListen anyway"); startQueryListen(); };
+    ack.onend=()=>{ console.log("🎙️ [WAKE] Ack done → query listen"); startQueryListen(); };
+    ack.onerror=()=>{ console.warn("⚠️ [WAKE] Ack TTS error → query listen anyway"); startQueryListen(); };
     synth.speak(ack);
   };
 
   r.onerror=e=>{
-    // 'aborted' is expected when we manually stop it — not a real error
-    if(e.error==="aborted"){ console.log("🛑 [WAKE] onerror aborted (expected)"); return; }
+    if(myToken!==wakeToken){ console.log("🗑️ [WAKE] Stale error ignored (token mismatch)"); return; }
+    if(e.error==="aborted"||e.error==="no-speech"){
+      console.log("ℹ️ [WAKE] onerror:"+e.error+" — normal, will restart via onend");
+      return; // let onend handle restart
+    }
     console.error("❌ [WAKE] onerror — code:", e.error);
-    if(e.error==="not-allowed") showErr("Mic denied — allow mic & reload.");
+    if(e.error==="not-allowed"){
+      showErr("Mic blocked. Allow microphone access and reload.");
+      wakeReady=false; // stop trying
+    } else if(e.error==="network"){
+      console.warn("⚠️ [WAKE] Network error on speech API — retrying in 3s");
+      setTimeout(()=>startWakeLoop(), 3000);
+    }
   };
 
   r.onend=()=>{
+    if(myToken!==wakeToken){ console.log("🗑️ [WAKE] Stale onend ignored"); return; }
     console.log("🏁 [WAKE] onend | appState:", appState);
-    // only restart if we're still in wake mode and nothing else took over
-    if(appState==="wake" && !wakeLoopStarting){
-      console.log("🔄 [WAKE] Scheduling restart...");
-      setTimeout(()=>{ if(appState==="wake") startWakeLoop(); }, 400);
+    if(appState==="wake" && wakeReady){
+      console.log("🔄 [WAKE] Restarting in 300ms...");
+      setTimeout(()=>{ if(appState==="wake" && wakeReady && myToken===wakeToken) startWakeLoop(); }, 300);
     }
   };
 
   try{
     r.start();
-    console.log("🚀 [WAKE] r.start() called");
+    console.log("🚀 [WAKE] r.start() called (token="+myToken+")");
   }catch(e){
     console.error("❌ [WAKE] r.start() threw:", e.name, e.message);
-    wakeLoopStarting=false;
+    wakeToken++; // invalidate
   }
 }
 
@@ -745,16 +761,19 @@ function startWakeLoop(){
 function handleOrbClick(){
   console.log("👆 [ORB] Orb tapped | appState:", appState, "| wakeReady:", wakeReady);
   if(appState==="wake"){
-    console.log("🎤 [ORB] State=wake → stopping wake loop, starting query listen");
-    try{wakeRecog?.abort();}catch{} startQueryListen();
+    console.log("🎤 [ORB] → Manual query listen");
+    wakeToken++; // stop any pending wake restart
+    killWakeRecog();
+    startQueryListen();
   } else if(appState==="listening"){
-    console.log("🛑 [ORB] State=listening → cancelling, returning to wake");
-    try{queryRecog?.abort();}catch{} setOrb("wake"); startWakeLoop();
+    console.log("🛑 [ORB] → Cancel listening");
+    if(queryRecog){ queryRecog.onend=null; queryRecog.onerror=null; try{queryRecog.abort();}catch{} queryRecog=null; }
+    setOrb("wake"); startWakeLoop();
   } else if(appState==="speaking"){
-    console.log("🛑 [ORB] State=speaking → cancelling TTS, returning to wake");
+    console.log("🛑 [ORB] → Cancel speaking");
     synth.cancel(); setOrb("wake"); startWakeLoop();
   } else {
-    console.log("⚠️ [ORB] Tap ignored — state is:", appState);
+    console.log("⚠️ [ORB] Tap ignored — appState:", appState);
   }
 }
 
@@ -766,8 +785,9 @@ function showErr(m){const e=g("errBox");if(e){e.textContent=m;e.style.display="b
 function hideErr(){const e=g("errBox");if(e)e.style.display="none";}
 function stopAll(){
   console.log("🛑 [UTIL] stopAll()");
+  wakeToken++; // invalidate any pending wake restart
   synth.cancel();
-  if(wakeRecog){ wakeRecog.onend=null; wakeRecog.onerror=null; try{wakeRecog.abort();}catch{} wakeRecog=null; }
+  killWakeRecog();
   if(queryRecog){ queryRecog.onend=null; queryRecog.onerror=null; try{queryRecog.abort();}catch{} queryRecog=null; }
   wakeReady=false;
 }
