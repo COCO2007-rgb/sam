@@ -126,6 +126,12 @@ textarea{height:68px;line-height:1.5}
     <input type="text" id="userName" placeholder="e.g. Aryy" maxlength="30"/>
   </div>
   <div class="sec">
+    <h3>🔑 Anthropic API Key</h3>
+    <div class="fl">Get yours free at <strong style="color:#00e5ff">console.anthropic.com</strong></div>
+    <input type="text" id="apiKey" placeholder="sk-ant-..." autocomplete="off" spellcheck="false"/>
+    <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:6px;line-height:1.5">Stored only on your device. Never shared.</div>
+  </div>
+  <div class="sec">
     <h3>Personality</h3>
     <div class="pg" id="pg">
       <div class="pc sel" data-p="friendly" onclick="selP(this)"><div class="em">😊</div><div class="pn">Friendly</div><div class="pd">Warm & helpful</div></div>
@@ -244,12 +250,36 @@ const COLS={wake:"#4a6fa5",listening:"#ff4081",thinking:"#ffea00",speaking:"#69f
 const LBLS={wake:"Say 'Hey SAM'…",listening:"Listening…",thinking:"Thinking…",speaking:"Speaking…",error:"Error"};
 const THRESHOLD=0.68;
 
+// ── CONTACTS — add your contacts here ──────────
+// Format: { name: "display name", phone: "number" }
+const CONTACTS=[
+  {name:"daddy",   phone:"+919999999999"},  // ← replace with real number
+  {name:"mom",     phone:"+919999999998"},
+  {name:"brother", phone:"+919999999997"},
+  // add more contacts here...
+];
+
 let cfg={},messages=[],appState="wake";
 let wakeReady=false,processing=false,wakeRecog=null,queryRecog=null;
+let wakeLoopLock=false; // prevents infinite restart loop
 const synth=window.speechSynthesis;
 let voiceLockEnabled=false,voiceProfile=null,enrollSamples=[],enrollCount=0;
 let selPers="friendly",selVoice="normal",selColor="#00e5ff",lockOn=false;
 let dynWake=["hey sam","hey, sam","ok sam","okay sam","hi sam"];
+
+// ── OFFLINE ANSWERS — SAM answers these without internet ────────────
+const OFFLINE_ANSWERS={
+  "what time is it":()=>"It's "+new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),
+  "what is the date":()=>"Today is "+new Date().toLocaleDateString([],{weekday:"long",year:"numeric",month:"long",day:"numeric"}),
+  "what day is it":()=>"Today is "+new Date().toLocaleDateString([],{weekday:"long"}),
+  "hello":()=>"Hey! I'm SAM. How can I help you?",
+  "hi":()=>"Hi there! What can I do for you?",
+  "how are you":()=>"I'm doing great, thanks for asking! How about you?",
+  "what is your name":()=>"I'm SAM, your personal voice assistant!",
+  "bye":()=>"Goodbye! Talk to you soon.",
+  "thank you":()=>"You're welcome! Anything else?",
+  "thanks":()=>"Happy to help!",
+};
 
 // ─ SETUP UI ─────────────────────────────────
 function selP(el){document.querySelectorAll(".pc").forEach(c=>c.classList.remove("sel"));el.classList.add("sel");selPers=el.dataset.p;}
@@ -264,6 +294,7 @@ function toggleLock(){
 function startApp(){
   cfg={assistantName:g("assistantName").value.trim()||"SAM",userName:g("userName").value.trim()||"",
     personality:selPers,voiceStyle:selVoice,accentColor:selColor,
+    apiKey:g("apiKey").value.trim(),
     customCtx:g("customCtx").value.trim(),voiceLock:lockOn};
   localStorage.setItem("sam_cfg",JSON.stringify(cfg));
   if(lockOn&&!voiceProfile){hide("setupScreen");show("enrollScreen");}
@@ -276,6 +307,7 @@ function loadCfgUI(){
   if(!cfg.assistantName)return;
   g("assistantName").value=cfg.assistantName;
   g("userName").value=cfg.userName||"";
+  g("apiKey").value=cfg.apiKey||"";
   g("customCtx").value=cfg.customCtx||"";
   document.querySelectorAll(".pc").forEach(c=>{if(c.dataset.p===cfg.personality)c.click();});
   document.querySelectorAll(".vc").forEach(c=>{if(c.dataset.v===cfg.voiceStyle)c.click();});
@@ -437,29 +469,113 @@ function speak(text,cb){
   console.log("🚀 [TTS] synth.speak() called | synth.speaking:", synth.speaking, "| synth.pending:", synth.pending);
 }
 
-// ─ CLAUDE ───────────────────────────────────
+// ─ PROCESS COMMAND (calls, offline, or Claude) ──────────────────────
+async function processCommand(txt){
+  console.log("⚡ [CMD] processCommand:", `"${txt}"`);
+  const lower=txt.toLowerCase().trim();
+
+  // ── 1. CALL COMMAND ────────────────────────────────────────────────
+  const callMatch=lower.match(/^(?:call|phone|dial|ring)\s+(.+)$/i);
+  if(callMatch){
+    const who=callMatch[1].trim().toLowerCase();
+    console.log("📞 [CMD] Call intent detected — looking for:", who);
+    const contact=CONTACTS.find(c=>who.includes(c.name.toLowerCase())||c.name.toLowerCase().includes(who));
+    if(contact){
+      console.log("📞 [CMD] Found contact:", contact.name, contact.phone);
+      const reply=`Calling ${contact.name} now!`;
+      addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
+      speak(reply,()=>{
+        setTimeout(()=>{ window.location.href="tel:"+contact.phone; },600);
+        setOrb("wake"); startWakeLoop();
+      });
+      return;
+    } else {
+      const reply=`I don't have ${who}'s number saved. You can add contacts in the app code.`;
+      console.log("📞 [CMD] Contact not found");
+      addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
+      speak(reply,()=>{setOrb("wake");startWakeLoop();}); return;
+    }
+  }
+
+  // ── 2. OFFLINE ANSWERS ─────────────────────────────────────────────
+  const offlineKey=Object.keys(OFFLINE_ANSWERS).find(k=>lower.includes(k));
+  if(offlineKey&&!navigator.onLine){
+    console.log("📴 [CMD] Offline mode — using built-in answer for:", offlineKey);
+    const reply=OFFLINE_ANSWERS[offlineKey]();
+    addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
+    speak(reply,()=>{setOrb("wake");startWakeLoop();}); return;
+  }
+
+  // ── 3. CLAUDE API ──────────────────────────────────────────────────
+  await askClaude(txt);
+}
+
 async function askClaude(txt){
-  console.log("🤖 [CLAUDE] askClaude() called | processing:", processing, "| text:", `"${txt}"`);
-  if(processing){ console.warn("⚠️ [CLAUDE] Already processing — ignoring call"); return; }
+  console.log("🤖 [CLAUDE] askClaude() | online:", navigator.onLine, "| text:", `"${txt}"`);
+  if(processing){ console.warn("⚠️ [CLAUDE] Already processing"); return; }
+
+  // check API key
+  const apiKey=cfg.apiKey||"";
+  if(!apiKey){
+    console.error("❌ [CLAUDE] No API key set!");
+    const reply="I need an API key to answer that. Please add your Anthropic API key in settings.";
+    addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
+    speak(reply,()=>{setOrb("wake");startWakeLoop();}); return;
+  }
+
+  // offline fallback
+  if(!navigator.onLine){
+    console.warn("📴 [CLAUDE] No internet — using offline fallback");
+    const reply="I'm offline right now. I can still tell you the time, date, or make calls. Ask me anything simple!";
+    addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
+    speak(reply,()=>{setOrb("wake");startWakeLoop();}); return;
+  }
+
   processing=true; setOrb("thinking");
   const um={role:"user",content:txt}; messages.push(um); addBubble(um); save();
-  console.log("📤 [CLAUDE] Sending to API | messages in history:", messages.length);
+  console.log("📤 [CLAUDE] Sending request | history:", messages.length, "messages");
+
   try{
-    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:prompt(),messages:messages.map(m=>({role:m.role==="sam"?"assistant":"user",content:m.content}))})});
-    console.log("📥 [CLAUDE] API response status:", res.status, res.statusText);
+    const res=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "x-api-key": apiKey,
+        "anthropic-version":"2023-06-01",
+        "anthropic-dangerous-direct-browser-access":"true"
+      },
+      body:JSON.stringify({
+        model:"claude-haiku-4-5-20251001",
+        max_tokens:300,
+        system:prompt(),
+        messages:messages.filter(m=>m.role==="user"||m.role==="sam")
+          .map(m=>({role:m.role==="sam"?"assistant":"user",content:m.content}))
+      })
+    });
+    console.log("📥 [CLAUDE] Status:", res.status, res.statusText);
     const d=await res.json();
-    console.log("📥 [CLAUDE] API response body:", JSON.stringify(d).slice(0,200));
-    if(d.error){ console.error("❌ [CLAUDE] API returned error:", d.error); }
+    console.log("📥 [CLAUDE] Body:", JSON.stringify(d).slice(0,300));
+    if(d.error){
+      console.error("❌ [CLAUDE] API error:", d.error.type, "-", d.error.message);
+      const reply=d.error.type==="authentication_error"
+        ?"My API key seems wrong. Please check it in settings."
+        :"Something went wrong: "+d.error.message;
+      addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
+      speak(reply,()=>{setOrb("wake");startWakeLoop();}); return;
+    }
     const reply=d.content?.map(c=>c.text||"").join("")||"Sorry, I didn't get that.";
-    console.log("✅ [CLAUDE] Reply:", `"${reply.slice(0,80)}..."`);
+    console.log("✅ [CLAUDE] Reply:", reply.slice(0,100));
     const sm={role:"sam",content:reply}; messages.push(sm); addBubble(sm); save();
     speak(reply,()=>{setOrb("wake");startWakeLoop();});
   }catch(e){
-    console.error("❌ [CLAUDE] fetch() threw an error:", e.name, e.message);
-    showErr("Network error."); setTimeout(()=>{hideErr();setOrb("wake");startWakeLoop();},3000);
+    console.error("❌ [CLAUDE] fetch failed:", e.name, e.message);
+    const reply="Network error. Check your internet connection.";
+    addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
+    speak(reply,()=>{setOrb("wake");startWakeLoop();});
+  }finally{
+    processing=false;
+    console.log("🏁 [CLAUDE] Done");
   }
-  finally{ processing=false; console.log("🏁 [CLAUDE] askClaude() finished"); }
 }
 
 // ─ QUERY LISTEN ─────────────────────────────
@@ -494,7 +610,7 @@ function startQueryListen(){
     const conf=e.results[0][0].confidence;
     console.log("✅ [QUERY] onresult — transcript:", `"${t}"`, "| confidence:", conf.toFixed(2));
     g("transcriptEl").textContent=`"${t}"`;
-    askClaude(t);
+    processCommand(t);
   };
 
   r.onerror=e=>{
@@ -533,68 +649,96 @@ function startQueryListen(){
 }
 
 // ─ WAKE LOOP ────────────────────────────────
+let wakeLoopStarting=false; // guard against overlapping starts
 function startWakeLoop(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){ console.error("❌ [WAKE] SpeechRecognition not supported"); return; }
-  if(!wakeReady){ console.warn("⚠️ [WAKE] wakeReady=false, skipping wake loop start"); return; }
-  console.log("👂 [WAKE] startWakeLoop() — listening for wake words:", dynWake);
-  try{wakeRecog?.abort(); console.log("🛑 [WAKE] Aborted previous wakeRecog");}catch(e){console.warn("⚠️ [WAKE] Could not abort:", e);}
+  if(!wakeReady){ console.warn("⚠️ [WAKE] wakeReady=false, skipping"); return; }
+  if(appState!=="wake"){ console.warn("⚠️ [WAKE] appState="+appState+", not starting wake loop"); return; }
+  if(wakeLoopStarting){ console.warn("⚠️ [WAKE] Already starting, skipping duplicate call"); return; }
 
-  const r=new SR(); r.lang="en-US"; r.continuous=false; r.interimResults=false; r.maxAlternatives=3; wakeRecog=r;
+  wakeLoopStarting=true;
+  console.log("👂 [WAKE] startWakeLoop() — dynWake:", dynWake);
 
-  r.onstart=()=>console.log("▶️ [WAKE] Wake recognition started — waiting for 'Hey SAM'");
+  // cleanly stop old one without triggering its onend restart
+  if(wakeRecog){
+    console.log("🛑 [WAKE] Stopping old wakeRecog");
+    wakeRecog.onend=null; // prevent onend from firing restart
+    wakeRecog.onerror=null;
+    try{ wakeRecog.abort(); }catch(e){ console.warn("⚠️ [WAKE] abort() error:", e.message); }
+    wakeRecog=null;
+  }
+
+  const r=new SR();
+  r.lang="en-US"; r.continuous=false; r.interimResults=false; r.maxAlternatives=3;
+  wakeRecog=r;
+  wakeLoopStarting=false;
+
+  r.onstart=()=>console.log("▶️ [WAKE] Recognition started — waiting for wake word");
   r.onaudiostart=()=>console.log("🔊 [WAKE] Audio capture started");
   r.onaudioend=()=>console.log("🔕 [WAKE] Audio capture ended");
 
   r.onresult=async e=>{
     const heard=Array.from(e.results).flatMap(r=>Array.from(r)).map(a=>a.transcript.toLowerCase().trim());
-    console.log("👂 [WAKE] onresult — heard:", heard);
+    console.log("👂 [WAKE] Heard:", heard);
     const triggered=heard.some(h=>dynWake.some(w=>h.includes(w)));
-    console.log("🔍 [WAKE] Wake word triggered?", triggered, "| checking against:", dynWake);
-    if(!triggered){ console.log("🚫 [WAKE] No wake word match — ignoring"); return; }
+    console.log("🔍 [WAKE] Wake word triggered?", triggered);
+    if(!triggered){ console.log("🚫 [WAKE] No match — ignoring"); return; }
+
+    // stop wake loop cleanly before acting
+    wakeRecog.onend=null; wakeRecog.onerror=null;
+    try{ wakeRecog.abort(); }catch{}
+    wakeRecog=null;
 
     // voice lock check
     if(voiceLockEnabled&&voiceProfile){
-      console.log("🔒 [WAKE] Voice lock enabled — capturing audio for comparison...");
-      try{wakeRecog?.abort();}catch{}
+      console.log("🔒 [WAKE] Checking voice lock...");
       const live=await captureFeatures(1200);
-      console.log("📊 [WAKE] Live voice features:", live);
+      console.log("📊 [WAKE] Live features:", live);
       const matched=voiceMatches(live);
-      console.log("🔒 [WAKE] Voice match result:", matched);
       if(!matched){
-        console.warn("🚫 [WAKE] Voice lock REJECTED — wrong voice detected");
+        console.warn("🚫 [WAKE] Voice REJECTED");
         flashRed(); showRejectToast();
-        setTimeout(()=>{if(appState==="wake")startWakeLoop();},1600);
+        setTimeout(()=>startWakeLoop(), 1800);
         return;
       }
-      console.log("✅ [WAKE] Voice lock ACCEPTED — proceeding");
+      console.log("✅ [WAKE] Voice ACCEPTED");
     }
 
-    console.log("🟢 [WAKE] Wake word accepted! Playing acknowledgement...");
-    try{wakeRecog?.abort();}catch{}
+    console.log("🟢 [WAKE] Activating SAM — playing ack");
     showToast(); synth.cancel();
     const ack=new SpeechSynthesisUtterance("Mm-hmm?");
     const v=VP[cfg.voiceStyle]||VP.normal; ack.rate=v.r*1.1; ack.pitch=v.p; ack.volume=0.7;
-    const vs=synth.getVoices(),pv=vs.find(v=>/samantha|karen|victoria|female|zira/i.test(v.name))||vs[0];
-    if(pv){ ack.voice=pv; console.log("🔊 [WAKE] Using voice:", pv.name); }
-    else { console.warn("⚠️ [WAKE] No preferred voice found, using default"); }
-    ack.onend=()=>{ console.log("🎙️ [WAKE] Ack done — starting query listen"); startQueryListen(); };
-    ack.onerror=(e)=>{ console.error("❌ [WAKE] Ack TTS error:", e); startQueryListen(); };
+    const vs=synth.getVoices(), pv=vs.find(v=>/samantha|karen|victoria|female|zira/i.test(v.name))||vs[0];
+    if(pv){ ack.voice=pv; console.log("🔊 [WAKE] Ack voice:", pv.name); }
+    ack.onend=()=>{ console.log("🎙️ [WAKE] Ack done → startQueryListen"); startQueryListen(); };
+    ack.onerror=()=>{ console.warn("⚠️ [WAKE] Ack TTS failed → startQueryListen anyway"); startQueryListen(); };
     synth.speak(ack);
   };
 
   r.onerror=e=>{
+    // 'aborted' is expected when we manually stop it — not a real error
+    if(e.error==="aborted"){ console.log("🛑 [WAKE] onerror aborted (expected)"); return; }
     console.error("❌ [WAKE] onerror — code:", e.error);
     if(e.error==="not-allowed") showErr("Mic denied — allow mic & reload.");
   };
 
   r.onend=()=>{
     console.log("🏁 [WAKE] onend | appState:", appState);
-    if(appState==="wake") setTimeout(()=>{if(appState==="wake"){ console.log("🔄 [WAKE] Restarting wake loop"); startWakeLoop();}},300);
+    // only restart if we're still in wake mode and nothing else took over
+    if(appState==="wake" && !wakeLoopStarting){
+      console.log("🔄 [WAKE] Scheduling restart...");
+      setTimeout(()=>{ if(appState==="wake") startWakeLoop(); }, 400);
+    }
   };
 
-  try{ r.start(); console.log("🚀 [WAKE] r.start() called"); }
-  catch(e){ console.error("❌ [WAKE] r.start() threw:", e.name, e.message); }
+  try{
+    r.start();
+    console.log("🚀 [WAKE] r.start() called");
+  }catch(e){
+    console.error("❌ [WAKE] r.start() threw:", e.name, e.message);
+    wakeLoopStarting=false;
+  }
 }
 
 // ─ ORB CLICK ────────────────────────────────
@@ -620,7 +764,13 @@ function show(id){g(id).classList.remove("hidden");}
 function hide(id){g(id).classList.add("hidden");}
 function showErr(m){const e=g("errBox");if(e){e.textContent=m;e.style.display="block";}}
 function hideErr(){const e=g("errBox");if(e)e.style.display="none";}
-function stopAll(){synth.cancel();try{wakeRecog?.abort();}catch{}try{queryRecog?.abort();}catch{}wakeReady=false;}
+function stopAll(){
+  console.log("🛑 [UTIL] stopAll()");
+  synth.cancel();
+  if(wakeRecog){ wakeRecog.onend=null; wakeRecog.onerror=null; try{wakeRecog.abort();}catch{} wakeRecog=null; }
+  if(queryRecog){ queryRecog.onend=null; queryRecog.onerror=null; try{queryRecog.abort();}catch{} queryRecog=null; }
+  wakeReady=false;
+}
 function clearChat(){messages=[];save();renderAll();}
 function save(){try{localStorage.setItem("sam_h_"+(cfg.assistantName||"SAM"),JSON.stringify(messages.slice(-60)));}catch{}}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
