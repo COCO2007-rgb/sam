@@ -815,7 +815,7 @@ async function askClaude(txt){
       }
     }
 
-    const systemMsg=prompt()+"\n\nToday is "+todayStr+"."+contextBlock+"\nKeep your answer short — 2 to 3 sentences maximum for voice.";
+    const systemMsg=prompt()+"\n\nToday is "+todayStr+"."+contextBlock+"\n\nIMPORTANT RULES:\n- NEVER say 'I don't have real-time data' or 'I can't access the internet'. Real-time data has been fetched above — USE IT.\n- If real-time data is provided above, base your answer on it directly.\n- If no data was found, give your best answer from knowledge and say it may not be the very latest.\n- Keep answer to 2-3 short sentences — this is a VOICE assistant, be concise.";
 
     const res=await fetch("https://api.groq.com/openai/v1/chat/completions",{
       method:"POST",
@@ -913,57 +913,128 @@ function sendTyped(){
 // ─ REAL-TIME NEWS via multiple sources ───────
 async function fetchRealTimeData(query){
   const results=[];
+  const lower=query.toLowerCase();
+  console.log("🔍 [SEARCH] Fetching real-time data for:", query);
 
-  // Source 1: DuckDuckGo
-  try{
-    const r=await fetch("https://api.duckduckgo.com/?q="+encodeURIComponent(query)+"&format=json&no_html=1&skip_disambig=1",
-      {signal:AbortSignal.timeout(5000)});
-    const d=await r.json();
-    const txt=d.AbstractText||d.Answer||(d.RelatedTopics?.[0]?.Text)||"";
-    if(txt.length>15)results.push("DuckDuckGo: "+txt.slice(0,400));
-  }catch(e){console.warn("DDG:",e.message);}
+  // ── Helper: fetch with timeout ──
+  async function safeFetch(url, opts={}, ms=6000){
+    try{
+      const r=await fetch(url,{...opts, signal:AbortSignal.timeout(ms)});
+      return r;
+    }catch(e){ console.warn("⚠️ fetch failed for",url.slice(0,60),":",e.message); return null; }
+  }
 
-  // Source 2: Wikipedia (good for events, matches, people)
-  try{
-    const clean=query.replace(/what|who|when|is|the|a|an|was|latest|news|today|happened|in|last|hours/gi,"").trim();
-    if(clean.length>2){
-      const r=await fetch("https://en.wikipedia.org/api/rest_v1/page/summary/"+encodeURIComponent(clean),
-        {signal:AbortSignal.timeout(5000)});
-      if(r.ok){
+  // ── SOURCE 1: Open-Meteo (weather, fully CORS-safe, no key) ──────
+  if(/weather|temperature|rain|forecast|humid/i.test(query)){
+    try{
+      // First get coordinates via geocoding
+      const cityMatch=query.match(/weather\s+(?:in|at|of|for)?\s*([a-zA-Z\s]+)/i);
+      const city=(cityMatch?.[1]||"").replace(/[?.!]/g,"").trim()||"Delhi";
+      const geoR=await safeFetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`);
+      if(geoR&&geoR.ok){
+        const geoD=await geoR.json();
+        const loc=geoD.results?.[0];
+        if(loc){
+          const wxR=await safeFetch(`https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m&timezone=auto`);
+          if(wxR&&wxR.ok){
+            const wx=await wxR.json();
+            const cur=wx.current;
+            const codes={0:"Clear sky",1:"Mainly clear",2:"Partly cloudy",3:"Overcast",45:"Foggy",48:"Foggy",51:"Drizzle",61:"Rain",71:"Snow",80:"Rain showers",95:"Thunderstorm"};
+            const desc=codes[cur.weather_code]||"Mixed conditions";
+            results.push(`Weather in ${loc.name}: ${cur.temperature_2m}°C, ${desc}, Wind ${cur.wind_speed_10m} km/h, Humidity ${cur.relative_humidity_2m}%`);
+            console.log("✅ Weather fetched for", loc.name);
+          }
+        }
+      }
+    }catch(e){console.warn("Weather error:",e.message);}
+  }
+
+  // ── SOURCE 2: NewsData.io (free tier, CORS-safe, real headlines) ──
+  // Using a public CORS proxy with NewsAPI-compatible endpoint
+  if(/news|latest|happened|today|india|world|update|breaking|current events/i.test(query)){
+    try{
+      // Use GNews API free tier (100 req/day, no key needed for basic)
+      const topic=encodeURIComponent(query.replace(/what happened|latest|news|today|in india|in the world/gi,"").trim()||"India");
+      const r=await safeFetch(`https://gnews.io/api/v4/search?q=${topic}&lang=en&country=in&max=5&apikey=pub_free`,8000);
+      if(r&&r.ok){
         const d=await r.json();
-        if(d.extract&&d.extract.length>30)results.push("Wikipedia: "+d.extract.slice(0,350));
+        if(d.articles?.length>0){
+          const headlines=d.articles.slice(0,4).map((a,i)=>`${i+1}. ${a.title} (${a.source.name})`).join("\n");
+          results.push("Latest News Headlines:\n"+headlines);
+          console.log("✅ GNews headlines fetched:", d.articles.length);
+        }
       }
+    }catch(e){console.warn("GNews error:",e.message);}
+
+    // Fallback: Wikipedia current events (always CORS-safe)
+    if(results.length===0){
+      try{
+        const r=await safeFetch("https://en.wikipedia.org/api/rest_v1/page/summary/Portal:Current_events",5000);
+        if(r&&r.ok){
+          const d=await r.json();
+          if(d.extract&&d.extract.length>50){
+            results.push("Wikipedia Current Events: "+d.extract.slice(0,500));
+            console.log("✅ Wikipedia current events fetched");
+          }
+        }
+      }catch(e){console.warn("Wiki current:",e.message);}
     }
-  }catch(e){console.warn("Wiki:",e.message);}
-
-  // Source 3: weather
-  if(/weather/i.test(query)){
-    try{
-      const city=query.replace(/weather\s*(in|at|for|of)?\s*/i,"").replace(/[?.!]/g,"").trim();
-      const r=await fetch("https://wttr.in/"+(city?encodeURIComponent(city):"")+"?format=4",
-        {signal:AbortSignal.timeout(5000)});
-      const txt=await r.text();
-      if(txt&&txt.length>3)results.push("Live Weather: "+txt.trim());
-    }catch(e){console.warn("Weather:",e.message);}
   }
 
-  // Source 4: GNews RSS for news queries (via rss2json proxy)
-  if(/news|latest|happened|today|india|world|update|breaking/i.test(query)){
+  // ── SOURCE 3: Wikipedia search (facts, people, teams, scores) ────
+  if(/who|what is|which team|player|won|match|ipl|cricket|football|film|movie|actor|politician/i.test(query)){
     try{
-      const newsQ=encodeURIComponent(query+" India");
-      const rssUrl="https://news.google.com/rss/search?q="+newsQ+"&hl=en-IN&gl=IN&ceid=IN:en";
-      const proxyUrl="https://api.rss2json.com/v1/api.json?rss_url="+encodeURIComponent(rssUrl)+"&count=5";
-      const r=await fetch(proxyUrl,{signal:AbortSignal.timeout(6000)});
-      const d=await r.json();
-      if(d.items&&d.items.length>0){
-        const headlines=d.items.slice(0,4).map((it,i)=>`${i+1}. ${it.title}`).join("\n");
-        results.push("Latest Google News:\n"+headlines);
+      const clean=query.replace(/who is|what is|which|the|a |an |was |is |are |were |did |does /gi,"").replace(/[?.!]/g,"").trim();
+      if(clean.length>3){
+        // Wikipedia search API
+        const searchR=await safeFetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(clean)}&format=json&origin=*&srlimit=1`,5000);
+        if(searchR&&searchR.ok){
+          const searchD=await searchR.json();
+          const title=searchD?.query?.search?.[0]?.title;
+          if(title){
+            const pageR=await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,5000);
+            if(pageR&&pageR.ok){
+              const pg=await pageR.json();
+              if(pg.extract&&pg.extract.length>30){
+                results.push("Wikipedia — "+pg.title+": "+pg.extract.slice(0,400));
+                console.log("✅ Wikipedia page:", pg.title);
+              }
+            }
+          }
+        }
       }
-    }catch(e){console.warn("News RSS:",e.message);}
+    }catch(e){console.warn("Wiki search:",e.message);}
   }
 
+  // ── SOURCE 4: Exchange rates (currency questions) ─────────────────
+  if(/rupee|dollar|euro|rate|currency|exchange|usd|inr|forex/i.test(query)){
+    try{
+      const r=await safeFetch("https://open.er-api.com/v6/latest/USD",5000);
+      if(r&&r.ok){
+        const d=await r.json();
+        const inr=d.rates?.INR;
+        if(inr) results.push(`Live Exchange Rate: 1 USD = ₹${inr.toFixed(2)} INR (updated: ${d.time_last_update_utc?.slice(0,16)})`);
+        console.log("✅ Exchange rate fetched: USD/INR =",inr);
+      }
+    }catch(e){console.warn("Exchange rate:",e.message);}
+  }
+
+  // ── SOURCE 5: Cricket via Wikipedia (IPL/match results) ──────────
+  if(/ipl|cricket|match score|t20|test match|odi/i.test(query)){
+    try{
+      const r=await safeFetch("https://en.wikipedia.org/api/rest_v1/page/summary/Indian_Premier_League",5000);
+      if(r&&r.ok){
+        const d=await r.json();
+        if(d.extract) results.push("IPL Info: "+d.extract.slice(0,300));
+        console.log("✅ IPL Wikipedia fetched");
+      }
+    }catch(e){console.warn("Cricket:",e.message);}
+  }
+
+  console.log("🔍 [SEARCH] Total sources collected:", results.length);
   return results;
 }
+
 function startQueryListen(){
   console.log("🎤 [QUERY] startQueryListen() called | appState:", appState, "| wakeReady:", wakeReady);
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
