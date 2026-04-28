@@ -913,129 +913,144 @@ function sendTyped(){
 // ─ REAL-TIME NEWS via multiple sources ───────
 async function fetchRealTimeData(query){
   const results=[];
-  const lower=query.toLowerCase();
-  console.log("🔍 [SEARCH] Fetching real-time data for:", query);
+  console.log("🔍 [SEARCH] Starting real-time fetch for:", query);
 
-  // ── Helper: fetch with timeout ──
-  async function safeFetch(url, opts={}, ms=6000){
+  async function safeFetch(url, ms=7000){
     try{
-      const r=await fetch(url,{...opts, signal:AbortSignal.timeout(ms)});
+      const r=await fetch(url,{signal:AbortSignal.timeout(ms)});
       return r;
-    }catch(e){ console.warn("⚠️ fetch failed for",url.slice(0,60),":",e.message); return null; }
+    }catch(e){console.warn("⚠️ safeFetch failed:",url.slice(0,50),e.message); return null;}
   }
 
-  // ── SOURCE 1: Open-Meteo (weather, fully CORS-safe, no key) ──────
-  if(/weather|temperature|rain|forecast|humid/i.test(query)){
-    try{
-      // First get coordinates via geocoding
-      const cityMatch=query.match(/weather\s+(?:in|at|of|for)?\s*([a-zA-Z\s]+)/i);
-      const city=(cityMatch?.[1]||"").replace(/[?.!]/g,"").trim()||"Delhi";
-      const geoR=await safeFetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`);
-      if(geoR&&geoR.ok){
-        const geoD=await geoR.json();
-        const loc=geoD.results?.[0];
-        if(loc){
-          const wxR=await safeFetch(`https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m&timezone=auto`);
-          if(wxR&&wxR.ok){
-            const wx=await wxR.json();
-            const cur=wx.current;
-            const codes={0:"Clear sky",1:"Mainly clear",2:"Partly cloudy",3:"Overcast",45:"Foggy",48:"Foggy",51:"Drizzle",61:"Rain",71:"Snow",80:"Rain showers",95:"Thunderstorm"};
-            const desc=codes[cur.weather_code]||"Mixed conditions";
-            results.push(`Weather in ${loc.name}: ${cur.temperature_2m}°C, ${desc}, Wind ${cur.wind_speed_10m} km/h, Humidity ${cur.relative_humidity_2m}%`);
-            console.log("✅ Weather fetched for", loc.name);
-          }
-        }
-      }
-    }catch(e){console.warn("Weather error:",e.message);}
-  }
-
-  // ── SOURCE 2: NewsData.io (free tier, CORS-safe, real headlines) ──
-  // Using a public CORS proxy with NewsAPI-compatible endpoint
-  if(/news|latest|happened|today|india|world|update|breaking|current events/i.test(query)){
-    try{
-      // Use GNews API free tier (100 req/day, no key needed for basic)
-      const topic=encodeURIComponent(query.replace(/what happened|latest|news|today|in india|in the world/gi,"").trim()||"India");
-      const r=await safeFetch(`https://gnews.io/api/v4/search?q=${topic}&lang=en&country=in&max=5&apikey=pub_free`,8000);
-      if(r&&r.ok){
-        const d=await r.json();
-        if(d.articles?.length>0){
-          const headlines=d.articles.slice(0,4).map((a,i)=>`${i+1}. ${a.title} (${a.source.name})`).join("\n");
-          results.push("Latest News Headlines:\n"+headlines);
-          console.log("✅ GNews headlines fetched:", d.articles.length);
-        }
-      }
-    }catch(e){console.warn("GNews error:",e.message);}
-
-    // Fallback: Wikipedia current events (always CORS-safe)
-    if(results.length===0){
-      try{
-        const r=await safeFetch("https://en.wikipedia.org/api/rest_v1/page/summary/Portal:Current_events",5000);
-        if(r&&r.ok){
-          const d=await r.json();
-          if(d.extract&&d.extract.length>50){
-            results.push("Wikipedia Current Events: "+d.extract.slice(0,500));
-            console.log("✅ Wikipedia current events fetched");
-          }
-        }
-      }catch(e){console.warn("Wiki current:",e.message);}
+  // Parse RSS XML titles helper
+  function parseRSSTitles(xml, skipWords=[], max=5){
+    const titles=[];
+    const re=/<title[^>]*>(?:<![\[CDATA[)?([\s\S]{10,200}?)(?:\]\]>)?<\/title>/gi;
+    let m;
+    while((m=re.exec(xml))!==null&&titles.length<max){
+      const t=m[1].replace(/<[^>]+>/g,"").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;/g,"'").trim();
+      if(t.length>8&&!skipWords.some(w=>t.toLowerCase().includes(w.toLowerCase())))
+        titles.push(t);
     }
+    return titles;
   }
 
-  // ── SOURCE 3: Wikipedia search (facts, people, teams, scores) ────
-  if(/who|what is|which team|player|won|match|ipl|cricket|football|film|movie|actor|politician/i.test(query)){
+  const proxy="https://api.allorigins.win/get?url=";
+
+  // ── WEATHER (Open-Meteo, no key, always works) ────────────────────
+  if(/weather|temperature|rain|forecast|humid|hot|cold/i.test(query)){
     try{
-      const clean=query.replace(/who is|what is|which|the|a |an |was |is |are |were |did |does /gi,"").replace(/[?.!]/g,"").trim();
+      const cm=query.match(/(?:weather|temperature|forecast)\s+(?:in|at|of|for)?\s*([a-zA-Z ]{2,30})/i);
+      const city=(cm?.[1]||"").replace(/[?.!]/g,"").trim()||"Surat";
+      const geo=await safeFetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`);
+      if(geo?.ok){
+        const gd=await geo.json();
+        const loc=gd.results?.[0];
+        if(loc){
+          const wx=await safeFetch(`https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m&timezone=auto`);
+          if(wx?.ok){
+            const wd=await wx.json(); const c=wd.current;
+            const codes={0:"Clear sky",1:"Mainly clear",2:"Partly cloudy",3:"Overcast",45:"Foggy",51:"Light drizzle",61:"Rain",71:"Snow",80:"Rain showers",95:"Thunderstorm"};
+            results.push(`Live Weather — ${loc.name}: ${c.temperature_2m}°C, ${codes[c.weather_code]||"Variable"}, Humidity ${c.relative_humidity_2m}%, Wind ${c.wind_speed_10m} km/h`);
+            console.log("✅ Weather OK for",loc.name);
+          }
+        }
+      }
+    }catch(e){console.warn("Weather:",e.message);}
+  }
+
+  // ── CURRENCY / STOCKS (open.er-api.com, no key) ───────────────────
+  if(/rupee|dollar|euro|pound|currency|exchange|usd|inr|forex|rate/i.test(query)){
+    try{
+      const r=await safeFetch("https://open.er-api.com/v6/latest/USD");
+      if(r?.ok){
+        const d=await r.json();
+        const inr=d.rates?.INR, eur=d.rates?.EUR, gbp=d.rates?.GBP;
+        results.push(`Live Rates (vs USD): ₹${inr?.toFixed(2)} INR | €${eur?.toFixed(3)} EUR | £${gbp?.toFixed(3)} GBP — Updated ${d.time_last_update_utc?.slice(5,16)}`);
+        console.log("✅ Exchange rates OK");
+      }
+    }catch(e){console.warn("Currency:",e.message);}
+  }
+
+  // ── GOOGLE NEWS RSS (any topic, via allorigins proxy) ────────────
+  // This is the main source for ALL news — works for cricket, politics, tech, everything
+  try{
+    const q=encodeURIComponent(query);
+    const feeds=[
+      // Topic-specific search
+      "https://news.google.com/rss/search?q="+q+"&hl=en-IN&gl=IN&ceid=IN:en",
+      // India top stories (always fresh)
+      "https://news.google.com/rss/headlines/section/geo/IN?hl=en-IN&gl=IN&ceid=IN:en"
+    ];
+    for(const feed of feeds){
+      const r=await safeFetch(proxy+encodeURIComponent(feed),8000);
+      if(r?.ok){
+        const d=await r.json();
+        const xml=d.contents||"";
+        if(!xml){continue;}
+        const titles=parseRSSTitles(xml,["google news","google","rss"],6);
+        if(titles.length>=2){
+          const label=feed.includes("search")?"Top News for '"+query+"'":"India Top Headlines";
+          results.push(label+":\n"+titles.map((t,i)=>`${i+1}. ${t}`).join("\n"));
+          console.log("✅ Google News RSS OK:",titles.length,"headlines from",label);
+          break; // got enough, don't need second feed
+        }
+      }
+    }
+  }catch(e){console.warn("Google News:",e.message);}
+
+  // ── CRICKET SCORES (cricbuzz RSS via allorigins) ──────────────────
+  if(/cricket|ipl|t20|odi|test match|match score|score|batting|bowling|wicket/i.test(query)){
+    try{
+      const feeds=[
+        "https://www.cricbuzz.com/rss-feeds/cricket-news",
+        "https://sports.ndtv.com/feeds/cricket-news",
+      ];
+      for(const feed of feeds){
+        const r=await safeFetch(proxy+encodeURIComponent(feed),8000);
+        if(r?.ok){
+          const d=await r.json();
+          const xml=d.contents||"";
+          const titles=parseRSSTitles(xml,["cricbuzz","ndtv"],5);
+          if(titles.length>=2){
+            results.push("Cricket Latest:\n"+titles.map((t,i)=>`${i+1}. ${t}`).join("\n"));
+            console.log("✅ Cricket RSS OK:",titles.length,"items");
+            break;
+          }
+        }
+      }
+    }catch(e){console.warn("Cricket RSS:",e.message);}
+  }
+
+  // ── WIKIPEDIA (facts, people, history, science) ───────────────────
+  if(results.filter(r=>r.includes("Wikipedia")).length===0){
+    try{
+      const clean=query.replace(/who is|what is|tell me about|explain|define|latest|news|today|happened/gi,"").replace(/[?.!]/g,"").trim();
       if(clean.length>3){
-        // Wikipedia search API
-        const searchR=await safeFetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(clean)}&format=json&origin=*&srlimit=1`,5000);
-        if(searchR&&searchR.ok){
-          const searchD=await searchR.json();
-          const title=searchD?.query?.search?.[0]?.title;
+        const sr=await safeFetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(clean)}&format=json&origin=*&srlimit=1`);
+        if(sr?.ok){
+          const sd=await sr.json();
+          const title=sd?.query?.search?.[0]?.title;
           if(title){
-            const pageR=await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,5000);
-            if(pageR&&pageR.ok){
-              const pg=await pageR.json();
-              if(pg.extract&&pg.extract.length>30){
-                results.push("Wikipedia — "+pg.title+": "+pg.extract.slice(0,400));
-                console.log("✅ Wikipedia page:", pg.title);
+            const pr=await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
+            if(pr?.ok){
+              const pg=await pr.json();
+              if(pg.extract?.length>40){
+                results.push("Wikipedia — "+pg.title+": "+pg.extract.slice(0,350));
+                console.log("✅ Wikipedia OK:", pg.title);
               }
             }
           }
         }
       }
-    }catch(e){console.warn("Wiki search:",e.message);}
+    }catch(e){console.warn("Wikipedia:",e.message);}
   }
 
-  // ── SOURCE 4: Exchange rates (currency questions) ─────────────────
-  if(/rupee|dollar|euro|rate|currency|exchange|usd|inr|forex/i.test(query)){
-    try{
-      const r=await safeFetch("https://open.er-api.com/v6/latest/USD",5000);
-      if(r&&r.ok){
-        const d=await r.json();
-        const inr=d.rates?.INR;
-        if(inr) results.push(`Live Exchange Rate: 1 USD = ₹${inr.toFixed(2)} INR (updated: ${d.time_last_update_utc?.slice(0,16)})`);
-        console.log("✅ Exchange rate fetched: USD/INR =",inr);
-      }
-    }catch(e){console.warn("Exchange rate:",e.message);}
-  }
-
-  // ── SOURCE 5: Cricket via Wikipedia (IPL/match results) ──────────
-  if(/ipl|cricket|match score|t20|test match|odi/i.test(query)){
-    try{
-      const r=await safeFetch("https://en.wikipedia.org/api/rest_v1/page/summary/Indian_Premier_League",5000);
-      if(r&&r.ok){
-        const d=await r.json();
-        if(d.extract) results.push("IPL Info: "+d.extract.slice(0,300));
-        console.log("✅ IPL Wikipedia fetched");
-      }
-    }catch(e){console.warn("Cricket:",e.message);}
-  }
-
-  console.log("🔍 [SEARCH] Total sources collected:", results.length);
+  console.log("🔍 [SEARCH] Done. Sources found:", results.length);
   return results;
 }
 
-function startQueryListen(){
+
   console.log("🎤 [QUERY] startQueryListen() called | appState:", appState, "| wakeReady:", wakeReady);
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){
