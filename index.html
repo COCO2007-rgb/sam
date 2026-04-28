@@ -100,6 +100,35 @@ textarea{height:68px;line-height:1.5}
 #toast{position:fixed;top:10px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,rgba(0,229,255,.17),rgba(0,229,255,.04));border:1px solid rgba(0,229,255,.38);backdrop-filter:blur(12px);color:#00e5ff;border-radius:22px;padding:6px 16px;font-size:11px;font-family:'Space Mono',monospace;letter-spacing:2px;z-index:500;pointer-events:none;opacity:0;transition:opacity .3s;white-space:nowrap;margin-top:max(env(safe-area-inset-top),6px)}
 #rejectToast{position:fixed;top:10px;left:50%;transform:translateX(-50%);background:rgba(255,82,82,.14);border:1px solid rgba(255,82,82,.38);backdrop-filter:blur(12px);color:#ff5252;border-radius:22px;padding:6px 16px;font-size:11px;font-family:'Space Mono',monospace;letter-spacing:1px;z-index:500;pointer-events:none;opacity:0;transition:opacity .3s;white-space:nowrap;margin-top:max(env(safe-area-inset-top),6px)}
 
+/* ── SIDEBAR ── */
+#sideOverlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;opacity:0;pointer-events:none;transition:opacity .3s;backdrop-filter:blur(4px)}
+#sideOverlay.open{opacity:1;pointer-events:all}
+#sidebar{position:fixed;left:-280px;top:0;bottom:0;width:260px;background:linear-gradient(180deg,#0a1628,#050a18);border-right:1px solid rgba(0,229,255,.12);z-index:201;transition:left .3s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;padding:max(env(safe-area-inset-top),32px) 0 max(env(safe-area-inset-bottom),20px)}
+#sidebar.open{left:0}
+.sb-header{padding:0 18px 18px;border-bottom:1px solid rgba(255,255,255,.06)}
+.sb-logo{font-size:28px;font-weight:700;letter-spacing:6px;background:linear-gradient(135deg,#fff,var(--c));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.sb-sub{font-family:'Space Mono',monospace;font-size:8px;letter-spacing:3px;color:rgba(0,229,255,.5);text-transform:uppercase;margin-top:2px}
+.sb-user{margin-top:10px;font-size:13px;color:rgba(255,255,255,.6)}
+.sb-items{flex:1;overflow-y:auto;padding:12px 0}
+.sb-item{display:flex;align-items:center;gap:12px;padding:12px 18px;cursor:pointer;transition:background .2s;border:none;background:transparent;width:100%;text-align:left;color:#fff}
+.sb-item:hover,.sb-item:active{background:rgba(255,255,255,.06)}
+.sb-item svg{flex-shrink:0;opacity:.7}
+.sb-item .sb-label{font-size:13px;font-weight:500}
+.sb-item .sb-desc{font-size:10px;color:rgba(255,255,255,.35);margin-top:1px}
+.sb-divider{height:1px;background:rgba(255,255,255,.06);margin:8px 18px}
+.sb-item.danger .sb-label{color:#ff5252}
+.sb-item.danger svg{opacity:.6}
+/* hamburger */
+#menuBtn{position:absolute;left:13px;top:max(env(safe-area-inset-top),16px);background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:3}
+
+/* ── TYPING BOX ── */
+#typeBar{display:flex;align-items:center;gap:8px;width:100%;max-width:500px;padding:0 2px}
+#typeInput{flex:1;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:22px;padding:9px 16px;color:#fff;font-family:'Exo 2',sans-serif;font-size:13px;outline:none;transition:border-color .2s}
+#typeInput:focus{border-color:rgba(0,229,255,.45);background:rgba(0,229,255,.04)}
+#typeInput::placeholder{color:rgba(255,255,255,.25)}
+#sendBtn{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#00b4d8,#0077b6);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:opacity .2s}
+#sendBtn:active{opacity:.7}
+
 @keyframes gridFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 @keyframes orbPulse{0%{transform:scale(1);opacity:.7}100%{transform:scale(2.1);opacity:0}}
@@ -205,10 +234,63 @@ textarea{height:68px;line-height:1.5}
   </div>
 </div>
 
+<!-- SIDEBAR OVERLAY -->
+<div id="sideOverlay" onclick="closeSidebar()"></div>
+
+<!-- SIDEBAR -->
+<div id="sidebar">
+  <div class="sb-header">
+    <div class="sb-logo">SAM</div>
+    <div class="sb-sub">Personal Assistant</div>
+    <div class="sb-user" id="sbUserName"></div>
+  </div>
+  <div class="sb-items">
+    <!-- New Chat -->
+    <button class="sb-item" onclick="newChat()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+      <div><div class="sb-label">New Chat</div><div class="sb-desc">Start a fresh conversation</div></div>
+    </button>
+    <!-- Clear Chat -->
+    <button class="sb-item" onclick="clearChat();closeSidebar()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M10 11v6M14 11v6" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+      <div><div class="sb-label">Clear Chat</div><div class="sb-desc">Delete all messages</div></div>
+    </button>
+    <div class="sb-divider"></div>
+    <!-- Voice Commands -->
+    <button class="sb-item" onclick="showCommands();closeSidebar()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" stroke="white" stroke-width="2"/><path d="M5 10a7 7 0 0014 0" stroke="white" stroke-width="2" stroke-linecap="round" fill="none"/><line x1="12" y1="17" x2="12" y2="21" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+      <div><div class="sb-label">Voice Commands</div><div class="sb-desc">See what SAM can do</div></div>
+    </button>
+    <!-- Settings -->
+    <button class="sb-item" onclick="openSettings();closeSidebar()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="white" stroke-width="2"/></svg>
+      <div><div class="sb-label">Settings</div><div class="sb-desc">Personality, voice, API key</div></div>
+    </button>
+    <!-- Re-enroll Voice -->
+    <button class="sb-item" onclick="reEnrollVoice();closeSidebar()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+      <div><div class="sb-label">Re-enroll Voice</div><div class="sb-desc">Reset voice lock samples</div></div>
+    </button>
+    <div class="sb-divider"></div>
+    <!-- Sign Out -->
+    <button class="sb-item danger" onclick="signOut()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" stroke="#ff5252" stroke-width="2" stroke-linecap="round"/><polyline points="16 17 21 12 16 7" stroke="#ff5252" stroke-width="2" stroke-linecap="round"/><line x1="21" y1="12" x2="9" y2="12" stroke="#ff5252" stroke-width="2" stroke-linecap="round"/></svg>
+      <div><div class="sb-label">Sign Out</div><div class="sb-desc">Clear all data & reset</div></div>
+    </button>
+  </div>
+</div>
+
 <!-- MAIN -->
 <div class="screen hidden" id="mainScreen">
   <div id="grid"></div>
   <div id="header">
+    <div id="menuBtn" onclick="openSidebar()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+        <line x1="3" y1="6" x2="21" y2="6" stroke="rgba(255,255,255,.7)" stroke-width="2" stroke-linecap="round"/>
+        <line x1="3" y1="12" x2="21" y2="12" stroke="rgba(255,255,255,.7)" stroke-width="2" stroke-linecap="round"/>
+        <line x1="3" y1="18" x2="21" y2="18" stroke="rgba(255,255,255,.7)" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </div>
     <div id="lockBadge">🔒 LOCKED</div>
     <div id="headerLabel">Voice Assistant</div>
     <div id="headerTitle">SAM</div>
@@ -230,7 +312,16 @@ textarea{height:68px;line-height:1.5}
     </div>
     <div id="stateLabel">Say 'Hey SAM'…</div>
     <div id="tapHint">OR TAP ORB TO SPEAK</div>
-    <button class="pill" id="clearBtn" onclick="clearChat()">CLEAR</button>
+    <!-- TYPING BOX -->
+    <div id="typeBar">
+      <input type="text" id="typeInput" placeholder="Type a message…" onkeydown="if(event.key==='Enter')sendTyped()"/>
+      <button id="sendBtn" onclick="sendTyped()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <line x1="22" y1="2" x2="11" y2="13" stroke="white" stroke-width="2" stroke-linecap="round"/>
+          <polygon points="22 2 15 22 11 13 2 9 22 2" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        </svg>
+      </button>
+    </div>
   </div>
 </div>
 
@@ -405,6 +496,7 @@ function voiceMatches(live){
 function launchMain(){
   console.log("🚀 [MAIN] launchMain() | cfg:", JSON.stringify({name:cfg.assistantName,personality:cfg.personality,voiceLock:cfg.voiceLock}));
   hide("setupScreen"); hide("enrollScreen"); show("mainScreen");
+  const sbU=g("sbUserName"); if(sbU&&cfg.userName) sbU.textContent="👤 "+cfg.userName;
   document.getElementById("headerTitle").textContent=cfg.assistantName.toUpperCase();
   document.documentElement.style.setProperty("--c",cfg.accentColor||"#00e5ff");
   g("wakeHint").innerHTML=`Say <strong style="color:#6fa3d9">"Hey ${cfg.assistantName}"</strong> to activate`;
@@ -701,122 +793,66 @@ async function askClaude(txt){
   processing=true; setOrb("thinking");
   const um={role:"user",content:txt}; messages.push(um); addBubble(um); save();
 
-  // detect if query needs real-time info
-  const needsWeb=/(score|match|live|today|news|weather|result|winner|won|lost|latest|current|right now|price|stock|trending|who is|who won|which team|ipl|cricket|football|fifa|nba|f1|grand prix|election|update)/i.test(txt);
-  console.log("📤 [AI] Calling Groq | needsWebSearch:", needsWeb);
-
   const todayStr=new Date().toLocaleDateString("en-IN",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
-  const systemWithDate=prompt()+`\n\nToday is ${todayStr}. You have access to web search — use it for any real-time questions like scores, news, prices, weather, results. Always search before saying you don't know.`;
+
+  // detect if this needs real-time web data
+  const needsWeb=/(score|match|live|today|news|weather|result|winner|won|lost|latest|current|right now|price|stock|trending|who won|which team|ipl|cricket|football|fifa|nba|f1|grand prix|election|update|happening)/i.test(txt);
+  console.log("📤 [AI] needsWeb:", needsWeb);
 
   try{
-    // Step 1: call with web_search tool enabled
-    const body={
-      model:"llama-3.3-70b-versatile",
-      max_tokens:500,
-      messages:[
-        {role:"system", content:systemWithDate},
-        ...messages
-          .filter(m=>m.role==="user"||m.role==="sam")
-          .slice(-10)
-          .map(m=>({role:m.role==="sam"?"assistant":"user", content:m.content}))
-      ]
-    };
+    let contextBlock="";
 
-    // add web search tool if query likely needs it
+    // SEARCH FIRST — no tool calling, just fetch results directly and inject as context
     if(needsWeb){
-      body.tools=[{
-        type:"function",
-        function:{
-          name:"web_search",
-          description:"Search the web for real-time information like cricket scores, news, match results, prices, weather.",
-          parameters:{
-            type:"object",
-            properties:{query:{type:"string",description:"The search query"}},
-            required:["query"]
-          }
-        }
-      }];
-      body.tool_choice="auto";
+      console.log("🔍 [SEARCH] Fetching real-time data for:", txt);
+      const sources=await fetchRealTimeData(txt);
+      if(sources.length>0){
+        contextBlock="\n\n[REAL-TIME DATA — use this to answer accurately]\n"+sources.join("\n")+"\n[End of real-time data. Summarise in 2-3 short sentences for voice.]";
+        console.log("✅ [SEARCH] Got",sources.length,"sources");
+      } else {
+        contextBlock="\n\n[Real-time search returned no results. Answer from training knowledge, and be honest if unsure about very recent events.]";
+        console.log("⚠️ [SEARCH] No data found");
+      }
     }
+
+    const systemMsg=prompt()+"\n\nToday is "+todayStr+"."+contextBlock+"\nKeep your answer short — 2 to 3 sentences maximum for voice.";
 
     const res=await fetch("https://api.groq.com/openai/v1/chat/completions",{
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":"Bearer "+apiKey},
-      body:JSON.stringify(body)
+      body:JSON.stringify({
+        model:"llama-3.3-70b-versatile",
+        max_tokens:200,
+        messages:[
+          {role:"system", content:systemMsg},
+          ...messages
+            .filter(m=>m.role==="user"||m.role==="sam")
+            .slice(-8)
+            .map(m=>({role:m.role==="sam"?"assistant":"user", content:m.content}))
+        ]
+      })
     });
+
     console.log("📥 [AI] Groq status:", res.status);
     const d=await res.json();
-    console.log("📥 [AI] Groq body:", JSON.stringify(d).slice(0,400));
+    console.log("📥 [AI] Groq reply:", JSON.stringify(d).slice(0,300));
 
     if(d.error){
       const isAuth=res.status===401||d.error.message?.toLowerCase().includes("auth")||d.error.message?.toLowerCase().includes("key");
-      const reply=isAuth?"My API key looks wrong. Please go to Settings and paste your Groq key again.":"Error: "+d.error.message;
+      const reply=isAuth
+        ?"My API key looks wrong. Please go to Settings and paste your Groq key again."
+        :"Something went wrong: "+d.error.message;
       addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
       speak(reply,()=>{setOrb("wake");startWakeLoop();}); return;
     }
 
-    const choice=d.choices?.[0];
-
-    // Step 2: if model wants to search — do the search via DuckDuckGo then re-ask
-    if(choice?.finish_reason==="tool_calls"&&choice?.message?.tool_calls?.length>0){
-      const toolCall=choice.message.tool_calls[0];
-      const searchQuery=JSON.parse(toolCall.function.arguments).query;
-      console.log("🔍 [AI] Web search requested for:", searchQuery);
-
-      // fetch search results from DuckDuckGo instant answer API (no key needed)
-      let searchResult="No results found.";
-      try{
-        const ddgRes=await fetch("https://api.duckduckgo.com/?q="+encodeURIComponent(searchQuery)+"&format=json&no_html=1&skip_disambig=1");
-        const ddgData=await ddgRes.json();
-        // extract best answer
-        searchResult=ddgData.AbstractText||ddgData.Answer||
-          (ddgData.RelatedTopics?.[0]?.Text)||
-          (ddgData.Results?.[0]?.Text)||
-          "No instant answer found — latest results may not be available yet.";
-        console.log("🔍 [AI] Search result:", searchResult.slice(0,200));
-      }catch(se){
-        console.warn("⚠️ [AI] Search fetch failed:", se.message);
-        // fallback: try wttr for weather, cricbuzz text for cricket
-        if(/weather/i.test(searchQuery)){
-          try{
-            const city=searchQuery.replace(/weather\s*(in|at|for)?/i,"").trim()||"";
-            const wr=await fetch("https://wttr.in/"+(city?""+encodeURIComponent(city):"")+"?format=3");
-            searchResult=await wr.text();
-          }catch{}
-        }
-      }
-
-      // Step 3: re-ask Groq with search results injected
-      const res2=await fetch("https://api.groq.com/openai/v1/chat/completions",{
-        method:"POST",
-        headers:{"Content-Type":"application/json","Authorization":"Bearer "+apiKey},
-        body:JSON.stringify({
-          model:"llama-3.3-70b-versatile",
-          max_tokens:400,
-          messages:[
-            {role:"system",content:systemWithDate},
-            ...messages.filter(m=>m.role==="user"||m.role==="sam").slice(-8)
-              .map(m=>({role:m.role==="sam"?"assistant":"user",content:m.content})),
-            {role:"assistant",content:null,tool_calls:[toolCall]},
-            {role:"tool",tool_call_id:toolCall.id,content:searchResult}
-          ]
-        })
-      });
-      const d2=await res2.json();
-      console.log("📥 [AI] Final answer body:", JSON.stringify(d2).slice(0,300));
-      const reply2=d2.choices?.[0]?.message?.content||"Sorry, I could not find that information.";
-      const sm2={role:"sam",content:reply2}; messages.push(sm2); addBubble(sm2); save();
-      speak(reply2,()=>{setOrb("wake");startWakeLoop();}); return;
-    }
-
-    // normal text reply
-    const reply=choice?.message?.content||"Sorry, I did not get that.";
-    console.log("✅ [AI] Reply:", reply.slice(0,100));
+    const reply=d.choices?.[0]?.message?.content||"Sorry, I did not get that.";
+    console.log("✅ [AI] Final reply:", reply.slice(0,120));
     const sm={role:"sam",content:reply}; messages.push(sm); addBubble(sm); save();
     speak(reply,()=>{setOrb("wake");startWakeLoop();});
 
   }catch(e){
-    console.error("❌ [AI] fetch failed:", e.name, e.message);
+    console.error("❌ [AI] Error:", e.name, e.message);
     const reply="Network error. Check your internet connection.";
     addBubble({role:"sam",content:reply}); messages.push({role:"sam",content:reply}); save();
     speak(reply,()=>{setOrb("wake");startWakeLoop();});
@@ -826,7 +862,108 @@ async function askClaude(txt){
   }
 }
 
-// ─ QUERY LISTEN ─────────────────────────────
+// ─ SIDEBAR ───────────────────────────────────
+function openSidebar(){
+  g("sidebar").classList.add("open");
+  g("sideOverlay").classList.add("open");
+}
+function closeSidebar(){
+  g("sidebar").classList.remove("open");
+  g("sideOverlay").classList.remove("open");
+}
+function newChat(){
+  messages=[];save();renderAll();closeSidebar();
+  const reply="Starting fresh! What can I help you with?";
+  addBubble({role:"sam",content:reply});
+  messages.push({role:"sam",content:reply}); save();
+  speak(reply,()=>{setOrb("wake");startWakeLoop();});
+}
+function signOut(){
+  if(!confirm("Sign out and clear all data?"))return;
+  localStorage.clear();
+  location.reload();
+}
+function reEnrollVoice(){
+  localStorage.removeItem("sam_vp");
+  voiceProfile=null; voiceLockEnabled=false;
+  stopAll();
+  hide("mainScreen"); show("enrollScreen");
+  enrollCount=0; enrollSamples=[];
+  [0,1,2].forEach(i=>{const d=g("sd"+i);if(d){d.classList.remove("done","rec");}});
+  g("enrollStatus").textContent='Tap orb → say "Hey SAM" (1/3)';
+}
+function showCommands(){
+  const cmds=`🎙️ VOICE COMMANDS\n\n📞 Calls: "Call Mom"\n🌐 Open: "Open YouTube"\n🔍 Search: "Search IPL score"\n🌤️ Weather: "Weather in Mumbai"\n⏰ Alarm: "Set alarm in 10 minutes"\n🔋 Battery: "Battery"\n📰 News: "Latest news India"\n🕐 Time: "What time is it"\n💬 AI: Anything else!`;
+  alert(cmds);
+}
+
+// ─ TYPING BOX ────────────────────────────────
+function sendTyped(){
+  const inp=g("typeInput");
+  const txt=inp.value.trim();
+  if(!txt)return;
+  inp.value="";
+  console.log("⌨️ [TYPE] User typed:", txt);
+  // stop any ongoing voice
+  synth.cancel();
+  try{queryRecog?.abort();}catch{}
+  processCommand(txt);
+}
+
+// ─ REAL-TIME NEWS via multiple sources ───────
+async function fetchRealTimeData(query){
+  const results=[];
+
+  // Source 1: DuckDuckGo
+  try{
+    const r=await fetch("https://api.duckduckgo.com/?q="+encodeURIComponent(query)+"&format=json&no_html=1&skip_disambig=1",
+      {signal:AbortSignal.timeout(5000)});
+    const d=await r.json();
+    const txt=d.AbstractText||d.Answer||(d.RelatedTopics?.[0]?.Text)||"";
+    if(txt.length>15)results.push("DuckDuckGo: "+txt.slice(0,400));
+  }catch(e){console.warn("DDG:",e.message);}
+
+  // Source 2: Wikipedia (good for events, matches, people)
+  try{
+    const clean=query.replace(/what|who|when|is|the|a|an|was|latest|news|today|happened|in|last|hours/gi,"").trim();
+    if(clean.length>2){
+      const r=await fetch("https://en.wikipedia.org/api/rest_v1/page/summary/"+encodeURIComponent(clean),
+        {signal:AbortSignal.timeout(5000)});
+      if(r.ok){
+        const d=await r.json();
+        if(d.extract&&d.extract.length>30)results.push("Wikipedia: "+d.extract.slice(0,350));
+      }
+    }
+  }catch(e){console.warn("Wiki:",e.message);}
+
+  // Source 3: weather
+  if(/weather/i.test(query)){
+    try{
+      const city=query.replace(/weather\s*(in|at|for|of)?\s*/i,"").replace(/[?.!]/g,"").trim();
+      const r=await fetch("https://wttr.in/"+(city?encodeURIComponent(city):"")+"?format=4",
+        {signal:AbortSignal.timeout(5000)});
+      const txt=await r.text();
+      if(txt&&txt.length>3)results.push("Live Weather: "+txt.trim());
+    }catch(e){console.warn("Weather:",e.message);}
+  }
+
+  // Source 4: GNews RSS for news queries (via rss2json proxy)
+  if(/news|latest|happened|today|india|world|update|breaking/i.test(query)){
+    try{
+      const newsQ=encodeURIComponent(query+" India");
+      const rssUrl="https://news.google.com/rss/search?q="+newsQ+"&hl=en-IN&gl=IN&ceid=IN:en";
+      const proxyUrl="https://api.rss2json.com/v1/api.json?rss_url="+encodeURIComponent(rssUrl)+"&count=5";
+      const r=await fetch(proxyUrl,{signal:AbortSignal.timeout(6000)});
+      const d=await r.json();
+      if(d.items&&d.items.length>0){
+        const headlines=d.items.slice(0,4).map((it,i)=>`${i+1}. ${it.title}`).join("\n");
+        results.push("Latest Google News:\n"+headlines);
+      }
+    }catch(e){console.warn("News RSS:",e.message);}
+  }
+
+  return results;
+}
 function startQueryListen(){
   console.log("🎤 [QUERY] startQueryListen() called | appState:", appState, "| wakeReady:", wakeReady);
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
