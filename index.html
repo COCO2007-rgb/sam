@@ -100,8 +100,26 @@ textarea{height:68px;line-height:1.5}
 .code-lang{font-family:'Space Mono',monospace;font-size:9px;letter-spacing:2px;color:rgba(0,229,255,.7);text-transform:uppercase}
 .copy-btn{background:rgba(0,229,255,.1);border:1px solid rgba(0,229,255,.25);color:#00e5ff;font-family:'Space Mono',monospace;font-size:9px;letter-spacing:1px;padding:3px 10px;border-radius:6px;cursor:pointer;transition:all .2s}
 .copy-btn:active,.copy-btn.copied{background:rgba(105,255,71,.15);border-color:rgba(105,255,71,.4);color:#69ff47}
-.code-body{overflow-x:auto;padding:12px 14px}
+.code-body{overflow-x:auto;padding:12px 14px;max-height:220px}
 .code-body pre{margin:0;font-family:'Space Mono',monospace;font-size:12px;line-height:1.7;color:#e2e8f0;white-space:pre;tab-size:2}
+/* expand btn */
+.expand-btn{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.6);font-family:'Space Mono',monospace;font-size:9px;letter-spacing:1px;padding:3px 10px;border-radius:6px;cursor:pointer;transition:all .2s;margin-left:6px}
+.expand-btn:active{background:rgba(255,255,255,.14)}
+/* download btn */
+.dl-btn{background:rgba(105,255,71,.1);border:1px solid rgba(105,255,71,.25);color:#69ff47;font-family:'Space Mono',monospace;font-size:9px;letter-spacing:1px;padding:3px 10px;border-radius:6px;cursor:pointer;margin-left:6px}
+/* CODE MODAL */
+#codeModal{position:fixed;inset:0;z-index:400;display:flex;flex-direction:column;background:#050a18;transform:translateY(100%);transition:transform .35s cubic-bezier(.4,0,.2,1)}
+#codeModal.open{transform:translateY(0)}
+#codeModalHeader{display:flex;align-items:center;justify-content:space-between;padding:max(env(safe-area-inset-top),16px) 16px 12px;background:#0a0f1e;border-bottom:1px solid rgba(0,229,255,.15);flex-shrink:0}
+#codeModalLang{font-family:'Space Mono',monospace;font-size:10px;letter-spacing:3px;color:#00e5ff;text-transform:uppercase}
+.modal-btns{display:flex;gap:8px;align-items:center}
+.modal-btn{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.15);color:#fff;font-family:'Space Mono',monospace;font-size:10px;letter-spacing:1px;padding:6px 14px;border-radius:8px;cursor:pointer;transition:all .2s}
+.modal-btn.green{background:rgba(105,255,71,.1);border-color:rgba(105,255,71,.3);color:#69ff47}
+.modal-btn.cyan{background:rgba(0,229,255,.1);border-color:rgba(0,229,255,.3);color:#00e5ff}
+.modal-btn:active{opacity:.7}
+#codeModalClose{background:transparent;border:none;color:rgba(255,255,255,.5);font-size:20px;cursor:pointer;padding:4px 8px;line-height:1}
+#codeModalBody{flex:1;overflow:auto;padding:16px}
+#codeModalBody pre{font-family:'Space Mono',monospace;font-size:13px;line-height:1.8;color:#e2e8f0;white-space:pre;tab-size:2;min-height:100%}
 /* syntax colours */
 .kw{color:#ff79c6;font-style:normal}.fn{color:#50fa7b;font-style:normal}.st{color:#f1fa8c;font-style:italic}.cm{color:#6272a4;font-style:italic}.nm{color:#bd93f9;font-style:normal}.at{color:#50fa7b;font-style:normal}.tg{color:#ff5555;font-style:normal}
 .bb.samb .hd{font-size:14px;font-weight:700;color:#00e5ff;margin:6px 0 3px}
@@ -351,6 +369,19 @@ textarea{height:68px;line-height:1.5}
   </div>
 </div>
 
+<!-- CODE MODAL -->
+<div id="codeModal">
+  <div id="codeModalHeader">
+    <span id="codeModalLang">code</span>
+    <div class="modal-btns">
+      <button class="modal-btn cyan" id="modalCopyBtn">📋 Copy</button>
+      <button class="modal-btn green" id="modalDlBtn">⬇ Download</button>
+    </div>
+    <button id="codeModalClose" onclick="closeCodeModal()">✕</button>
+  </div>
+  <div id="codeModalBody"><pre id="codeModalPre"></pre></div>
+</div>
+
 <div id="toast">👋 Hey! I'm listening…</div>
 <div id="rejectToast">🔒 Wrong voice — SAM locked</div>
 
@@ -582,10 +613,23 @@ function addBubble(m){
     bb.querySelectorAll(".copy-btn").forEach(btn=>{
       btn.addEventListener("click",()=>{
         const code=decodeURIComponent(btn.dataset.code||"");
-        const doCopy=()=>{try{const ta=document.createElement("textarea");ta.value=code;document.body.appendChild(ta);ta.select();document.execCommand("copy");document.body.removeChild(ta);}catch{}};
-        if(navigator.clipboard){navigator.clipboard.writeText(code).catch(doCopy);}else{doCopy();}
+        copyText(code);
         btn.textContent="✓ Copied!"; btn.classList.add("copied");
-        setTimeout(()=>{btn.textContent="Copy";btn.classList.remove("copied");},2000);
+        setTimeout(()=>{btn.textContent="📋 Copy";btn.classList.remove("copied");},2000);
+      });
+    });
+    bb.querySelectorAll(".expand-btn").forEach(btn=>{
+      btn.addEventListener("click",()=>{
+        const code=decodeURIComponent(btn.dataset.code||"");
+        const lang=btn.dataset.lang||"code";
+        openCodeModal(code,lang);
+      });
+    });
+    bb.querySelectorAll(".dl-btn").forEach(btn=>{
+      btn.addEventListener("click",()=>{
+        const code=decodeURIComponent(btn.dataset.code||"");
+        const lang=btn.dataset.lang||"code";
+        downloadCode(code,lang);
       });
     });
     w.appendChild(av); w.appendChild(bb);
@@ -604,7 +648,19 @@ function renderMsg(text){
     if(m){
       const lang=m[1]||"code", code=m[2];
       const enc=encodeURIComponent(code);
-      return `<div class="code-block"><div class="code-header"><span class="code-lang">${esc(lang)}</span><button class="copy-btn" data-code="${esc(enc)}">Copy</button></div><div class="code-body"><pre>${highlight(code,lang)}</pre></div></div>`;
+      const lines=code.split("\n").length;
+      return `<div class="code-block">
+        <div class="code-header">
+          <span class="code-lang">${esc(lang)}</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="copy-btn" data-code="${esc(enc)}">📋 Copy</button>
+            <button class="expand-btn" data-code="${esc(enc)}" data-lang="${esc(lang)}">⛶ Expand</button>
+            <button class="dl-btn" data-code="${esc(enc)}" data-lang="${esc(lang)}">⬇ Save</button>
+          </div>
+        </div>
+        <div class="code-body"><pre>${highlight(code,lang)}</pre></div>
+        ${lines>8?`<div style="text-align:center;padding:4px;font-size:10px;color:rgba(255,255,255,.3);font-family:'Space Mono',monospace">${lines} lines — tap ⛶ to expand</div>`:""}
+      </div>`;
     }
     return p.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
       .replace(/\*\*([^*\n]+)\*\*/g,"<strong>$1</strong>")
@@ -615,6 +671,42 @@ function renderMsg(text){
       .replace(/^(\d+)\. (.+)$/gm,"<div class='li'>$1. $2</div>")
       .replace(/\n/g,"<br>");
   }).join("");
+}
+
+// ── Code modal functions ──────────────────────────────────────────
+let modalCode="", modalLang="";
+function openCodeModal(code,lang){
+  modalCode=code; modalLang=lang;
+  g("codeModalLang").textContent=lang||"code";
+  g("codeModalPre").innerHTML=highlight(code,lang);
+  g("codeModal").classList.add("open");
+  // setup modal buttons
+  g("modalCopyBtn").onclick=()=>{
+    copyText(code);
+    g("modalCopyBtn").textContent="✓ Copied!";
+    setTimeout(()=>g("modalCopyBtn").textContent="📋 Copy",2000);
+  };
+  g("modalDlBtn").onclick=()=>downloadCode(code,lang);
+}
+function closeCodeModal(){ g("codeModal").classList.remove("open"); }
+function copyText(text){
+  if(navigator.clipboard){navigator.clipboard.writeText(text).catch(()=>copyFallback(text));}
+  else{copyFallback(text);}
+}
+function copyFallback(text){
+  const ta=document.createElement("textarea");
+  ta.value=text; document.body.appendChild(ta); ta.select();
+  document.execCommand("copy"); document.body.removeChild(ta);
+}
+function downloadCode(code,lang){
+  const ext={python:"py",javascript:"js",typescript:"ts",html:"html",css:"css",java:"java",cpp:"cpp",c:"c",sql:"sql",bash:"sh",json:"json"}[lang?.toLowerCase()]||"txt";
+  const blob=new Blob([code],{type:"text/plain"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=`sam_code_${Date.now()}.${ext}`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
 }
 
 function highlight(code,lang){
@@ -756,7 +848,28 @@ async function processCommand(txt){
     return;
   }
 
-  // ── 2. OPEN WEBSITE / APP ─────────────────────────────────────────
+  // ── 2. ON-DEVICE / SYSTEM COMMANDS ──────────────────────────────
+  const SYSTEM_CMDS={
+    "go home":()=>history.go(-(history.length-1)),
+    "go back":()=>history.back(),
+    "go forward":()=>history.forward(),
+    "refresh":()=>location.reload(),
+    "reload":()=>location.reload(),
+    "scroll up":()=>document.getElementById("chat").scrollBy({top:-200,behavior:"smooth"}),
+    "scroll down":()=>document.getElementById("chat").scrollBy({top:200,behavior:"smooth"}),
+    "clear chat":()=>clearChat(),
+    "new chat":()=>newChat(),
+    "open settings":()=>openSettings(),
+    "close":()=>window.close(),
+    "take screenshot":()=>samSay("Screenshot is a device feature — press the power and volume down buttons together."),
+    "increase volume":()=>samSay("I can't control volume directly, but you can use your device volume buttons."),
+    "mute":()=>samSay("I can't mute your device, but you can press the volume button."),
+  };
+  for(const [cmd,fn] of Object.entries(SYSTEM_CMDS)){
+    if(lower.includes(cmd)){ samSay(`OK, ${cmd}!`,fn); return; }
+  }
+
+  // ── 3. OPEN WEBSITE / APP WITH SMART PARSING ─────────────────────
   const SITES={
     "youtube":"https://youtube.com","whatsapp":"https://web.whatsapp.com",
     "instagram":"https://instagram.com","facebook":"https://facebook.com",
@@ -768,16 +881,72 @@ async function processCommand(txt){
     "github":"https://github.com","wikipedia":"https://wikipedia.org",
     "news":"https://news.google.com","cricket":"https://cricbuzz.com",
     "chatgpt":"https://chat.openai.com","translate":"https://translate.google.com",
+    "linkedin":"https://linkedin.com","reddit":"https://reddit.com",
+    "snapchat":"https://snapchat.com","telegram":"https://web.telegram.org",
+    "pinterest":"https://pinterest.com","quora":"https://quora.com",
   };
+
+  // Smart URL builder — handles "open youtube and search mr beast"
+  function buildSmartUrl(site, action){
+    const s=site.trim().toLowerCase();
+    const a=(action||"").trim();
+    const baseUrl=SITES[s];
+    if(!a) return baseUrl||(s.includes(".")?`https://${s}`:`https://${s.replace(/\s+/g,"")}.com`);
+    // site-specific deep links with action
+    if(s==="youtube"&&a){
+      const kw=a.replace(/^(and )?(search|find|look up|play|watch|open)\s*/i,"").trim();
+      return `https://youtube.com/results?search_query=${encodeURIComponent(kw)}`;
+    }
+    if(s==="google maps"||s==="maps"){
+      const place=a.replace(/^(and )?(search|find|open|go to|navigate to)\s*/i,"").trim();
+      return `https://maps.google.com/search/${encodeURIComponent(place)}`;
+    }
+    if(s==="spotify"){
+      const song=a.replace(/^(and )?(search|play|find)\s*/i,"").trim();
+      return `https://open.spotify.com/search/${encodeURIComponent(song)}`;
+    }
+    if(s==="amazon"){
+      const item=a.replace(/^(and )?(search|find|look for|buy)\s*/i,"").trim();
+      return `https://amazon.in/s?k=${encodeURIComponent(item)}`;
+    }
+    if(s==="flipkart"){
+      const item=a.replace(/^(and )?(search|find|look for|buy)\s*/i,"").trim();
+      return `https://flipkart.com/search?q=${encodeURIComponent(item)}`;
+    }
+    if(s==="wikipedia"){
+      const topic=a.replace(/^(and )?(search|find|open|look up)\s*/i,"").trim();
+      return `https://en.wikipedia.org/wiki/${encodeURIComponent(topic)}`;
+    }
+    if(s==="netflix"){
+      const show=a.replace(/^(and )?(search|find|play|watch|open)\s*/i,"").trim();
+      return `https://netflix.com/search?q=${encodeURIComponent(show)}`;
+    }
+    // generic: open site, then search
+    const base=baseUrl||(s.includes(".")?`https://${s}`:`https://${s.replace(/\s+/g,"")}.com`);
+    const searchTerm=a.replace(/^(and )?(search|find|open|go to)\s*/i,"").trim();
+    if(searchTerm) return base+"/search?q="+encodeURIComponent(searchTerm);
+    return base;
+  }
+
+  // Parse "open X and search/do Y" or "open X and Y"
   const openMatch=lower.match(/^(?:open|launch|go to|take me to|show me)\s+(.+)$/i);
   if(openMatch){
-    const what=openMatch[1].trim().toLowerCase();
-    const url=SITES[what]||("https://"+what.replace(/\s+/g,"")+".com");
-    samSay(`Opening ${what}!`,()=>setTimeout(()=>window.open(url,"_blank"),700));
+    const rest=openMatch[1].trim().toLowerCase();
+    // check for compound: "youtube and search mr beast" or "youtube and mr beast"
+    const compoundMatch=rest.match(/^(.+?)\s+(?:and\s+(?:search|find|play|watch|open|navigate|go to)?|then\s+(?:search|find|play|watch|open)?)\s*(.+)$/i);
+    if(compoundMatch){
+      const site=compoundMatch[1].trim();
+      const action=compoundMatch[2].trim();
+      const url=buildSmartUrl(site,action);
+      samSay(`Opening ${site} and searching for ${action}!`,()=>setTimeout(()=>window.open(url,"_blank"),800));
+    } else {
+      const url=buildSmartUrl(rest,"");
+      samSay(`Opening ${rest}!`,()=>setTimeout(()=>window.open(url,"_blank"),700));
+    }
     return;
   }
 
-  // ── 3. GOOGLE SEARCH ─────────────────────────────────────────────
+  // ── 4. GOOGLE SEARCH ─────────────────────────────────────────────
   const searchMatch=lower.match(/^(?:search|search for|google|look up|find)\s+(.+)$/i);
   if(searchMatch){
     const query=searchMatch[1].trim();
@@ -891,7 +1060,7 @@ async function askClaude(txt){
   const todayStr=new Date().toLocaleDateString("en-IN",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
 
   // detect if this needs real-time web data
-  const needsWeb=/(score|match|live|today|news|weather|result|winner|won|lost|latest|current|right now|price|stock|trending|who won|which team|ipl|cricket|football|fifa|nba|f1|grand prix|election|update|happening)/i.test(txt);
+  const needsWeb=/(score|match|live|today|yesterday|news|weather|result|winner|won|lost|latest|current|right now|price|stock|trending|who won|which team|ipl|cricket|football|fifa|nba|f1|grand prix|election|update|happening|last match|recent|this week)/i.test(txt);
   console.log("📤 [AI] needsWeb:", needsWeb);
 
   try{
@@ -910,14 +1079,19 @@ async function askClaude(txt){
       }
     }
 
-    const systemMsg=prompt()+"\n\nToday is "+todayStr+"."+contextBlock+"\n\nIMPORTANT RULES:\n- NEVER say 'I don't have real-time data' or 'I can't access the internet'. Real-time data has been fetched above — USE IT.\n- If real-time data is provided above, base your answer on it directly.\n- If no data was found, give your best answer from knowledge and say it may not be the very latest.\n- Keep answer to 2-3 short sentences — this is a VOICE assistant, be concise.";
+    const isCodeReq=/(code|program|function|script|write|build|create|implement|algorithm|html|css|javascript|python|java|cpp|sql|regex|snippet)/i.test(txt);
+    const maxTok=isCodeReq?4000:300;
+
+    const systemMsg=prompt()+"\n\nToday is "+todayStr+"."+contextBlock+(isCodeReq?
+      "\n\nCODE MODE: Give COMPLETE working code — never truncate, never say 'rest of code here'. Always use fenced code blocks with language. Add brief explanation after.":
+      "\n\nIMPORTANT: NEVER say you don't have real-time data. Use the data above. Keep reply to 2-3 short sentences for voice.");
 
     const res=await fetch("https://api.groq.com/openai/v1/chat/completions",{
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":"Bearer "+apiKey},
       body:JSON.stringify({
         model:"llama-3.3-70b-versatile",
-        max_tokens:200,
+        max_tokens:maxTok,
         messages:[
           {role:"system", content:systemMsg},
           ...messages
@@ -1136,7 +1310,7 @@ function startQueryListen(){ console.log("🎤 [QUERY] startQueryListen() called
   try{queryRecog?.abort(); console.log("🛑 [QUERY] Aborted previous queryRecog");}catch(e){console.warn("⚠️ [QUERY] Could not abort previous queryRecog:", e);}
 
   const r=new SR();
-  r.lang="en-US"; r.interimResults=false; r.maxAlternatives=1;
+  r.lang="en-US"; r.interimResults=true; r.maxAlternatives=3;
   queryRecog=r;
   console.log("🔧 [QUERY] Recognition configured — lang:", r.lang, "| interimResults:", r.interimResults);
 
@@ -1150,12 +1324,21 @@ function startQueryListen(){ console.log("🎤 [QUERY] startQueryListen() called
   r.onaudioend=()=>console.log("🔕 [QUERY] onaudioend — audio capture ended");
   r.onnomatch=()=>console.warn("🤷 [QUERY] onnomatch — speech detected but no recognition match");
 
+  let queryBuffer=null; // buffer timer for action delay
   r.onresult=e=>{
     const t=e.results[0][0].transcript;
     const conf=e.results[0][0].confidence;
-    console.log("✅ [QUERY] onresult — transcript:", `"${t}"`, "| confidence:", conf.toFixed(2));
+    const isFinal=e.results[0].isFinal;
+    console.log("✅ [QUERY] onresult — transcript:", `"${t}"`, "| confidence:", conf.toFixed(2), "| final:", isFinal);
     g("transcriptEl").textContent=`"${t}"`;
-    processCommand(t);
+    // clear any previous buffer
+    if(queryBuffer) clearTimeout(queryBuffer);
+    // wait 900ms after last result before acting — gives time for more words to come in
+    queryBuffer=setTimeout(()=>{
+      queryBuffer=null;
+      console.log("⚡ [QUERY] Buffer elapsed — processing:", t);
+      processCommand(t);
+    }, isFinal?400:900);
   };
 
   r.onerror=e=>{
@@ -1233,8 +1416,18 @@ function startWakeLoop(){
     if(myToken!==wakeToken){ console.log("🗑️ [WAKE] Stale token, ignoring result"); return; }
     const heard=Array.from(e.results).flatMap(r=>Array.from(r)).map(a=>a.transcript.toLowerCase().trim());
     console.log("👂 [WAKE] Heard:", heard);
-    const triggered=heard.some(h=>dynWake.some(w=>h.includes(w)));
-    if(!triggered){ console.log("🚫 [WAKE] No wake word match"); return; }
+
+    // fuzzy wake word check — also catch common mishears like "hey sam", "a sam", "hey scan"
+    function wakeMatch(h){
+      if(dynWake.some(w=>h.includes(w))) return true;
+      // fuzzy: "hey" + name within 6 chars
+      const name=(cfg.assistantName||"sam").toLowerCase();
+      const variants=["hey","hi","ok","okay","a","eh","hay","hei"];
+      return variants.some(v=>h.includes(v+" "+name)||h.includes(v+","+name)||h.includes(v+name));
+    }
+    const triggered=heard.some(h=>wakeMatch(h));
+    console.log("🔍 [WAKE] Trigger check:", triggered, "heard:", heard);
+    if(!triggered){ console.log("🚫 [WAKE] No match"); return; }
     console.log("✅ [WAKE] Wake word matched!");
 
     // prevent onend from restarting
