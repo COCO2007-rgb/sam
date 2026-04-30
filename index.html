@@ -156,9 +156,15 @@ textarea{height:68px;line-height:1.5}
   </div>
   <div class="sec">
     <h3>🔑 Groq API Key (Free)</h3>
-    <div class="fl">Get yours free at <strong style="color:#00e5ff">console.groq.com</strong> → API Keys</div>
+    <div class="fl">Get free key at <strong style="color:#00e5ff">console.groq.com</strong> → API Keys</div>
     <input type="text" id="apiKey" placeholder="gsk_..." autocomplete="off" spellcheck="false"/>
     <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:6px;line-height:1.5">100% free. Stored only on your device.</div>
+  </div>
+  <div class="sec">
+    <h3>📰 NewsData.io Key (Real-time News)</h3>
+    <div class="fl">Get free key at <strong style="color:#00e5ff">newsdata.io</strong> → Sign Up → Dashboard</div>
+    <input type="text" id="newsKey" placeholder="pub_..." autocomplete="off" spellcheck="false"/>
+    <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:6px;line-height:1.5">200 free requests/day. Enables live news, IPL scores, breaking news.</div>
   </div>
   <div class="sec">
     <h3>Personality</h3>
@@ -412,6 +418,7 @@ function startApp(){
   cfg={assistantName:g("assistantName").value.trim()||"SAM",userName:g("userName").value.trim()||"",
     personality:selPers,voiceStyle:selVoice,accentColor:selColor,
     apiKey:g("apiKey").value.trim(),
+    newsKey:g("newsKey").value.trim(),
     customCtx:g("customCtx").value.trim(),voiceLock:lockOn};
   localStorage.setItem("sam_cfg",JSON.stringify(cfg));
   if(lockOn&&!voiceProfile){hide("setupScreen");show("enrollScreen");}
@@ -425,6 +432,7 @@ function loadCfgUI(){
   g("assistantName").value=cfg.assistantName;
   g("userName").value=cfg.userName||"";
   g("apiKey").value=cfg.apiKey||"";
+  g("newsKey").value=cfg.newsKey||"";
   g("customCtx").value=cfg.customCtx||"";
   document.querySelectorAll(".pc").forEach(c=>{if(c.dataset.p===cfg.personality)c.click();});
   document.querySelectorAll(".vc").forEach(c=>{if(c.dataset.v===cfg.voiceStyle)c.click();});
@@ -913,145 +921,124 @@ function sendTyped(){
 // ─ REAL-TIME NEWS via multiple sources ───────
 async function fetchRealTimeData(query){
   const results=[];
-  console.log("🔍 [SEARCH] Starting real-time fetch for:", query);
+  console.log("🔍 [SEARCH] Fetching for:", query);
 
-  async function safeFetch(url, ms=7000){
+  async function sf(url,ms=8000){
+    try{ const r=await fetch(url,{signal:AbortSignal.timeout(ms)}); return r; }
+    catch(e){ console.warn("fetch err:",url.slice(0,50),e.message); return null; }
+  }
+
+  // ── 1. NEWSDATA.IO — primary source for all real-time news ──────
+  const newsKey=(cfg.newsKey||"").trim();
+  if(newsKey){
+    // Search-specific news
     try{
-      const r=await fetch(url,{signal:AbortSignal.timeout(ms)});
-      return r;
-    }catch(e){console.warn("⚠️ safeFetch failed:",url.slice(0,50),e.message); return null;}
-  }
+      const q=encodeURIComponent(query.replace(/what|happened|latest|tell me|about|in the last|24 hours/gi,"").trim()||"India");
+      const r=await sf(`https://newsdata.io/api/1/news?apikey=${newsKey}&q=${q}&country=in&language=en&size=5`,9000);
+      if(r?.ok){
+        const d=await r.json();
+        console.log("NewsData status:",d.status,"count:",d.results?.length);
+        if(d.status==="success"&&d.results?.length>0){
+          const h=d.results.slice(0,5).map((a,i)=>`${i+1}. ${a.title} [${a.source_id||"news"}] (${(a.pubDate||"").slice(0,10)})`).join("\n");
+          results.push("LIVE NEWS:\n"+h);
+          console.log("✅ NewsData query OK");
+        }
+      }
+    }catch(e){console.warn("NewsData:",e.message);}
 
-  // Parse RSS XML titles helper
-  function parseRSSTitles(xml, skipWords=[], max=5){
-    const titles=[];
-    const re=/<title[^>]*>(?:<![\[CDATA[)?([\s\S]{10,200}?)(?:\]\]>)?<\/title>/gi;
-    let m;
-    while((m=re.exec(xml))!==null&&titles.length<max){
-      const t=m[1].replace(/<[^>]+>/g,"").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;/g,"'").trim();
-      if(t.length>8&&!skipWords.some(w=>t.toLowerCase().includes(w.toLowerCase())))
-        titles.push(t);
+    // Top India headlines for general queries
+    if(/india|happened|today|news|update|breaking|latest|current/i.test(query)){
+      try{
+        const r=await sf(`https://newsdata.io/api/1/news?apikey=${newsKey}&country=in&language=en&size=5&category=top`,9000);
+        if(r?.ok){
+          const d=await r.json();
+          if(d.status==="success"&&d.results?.length>0){
+            const h=d.results.slice(0,5).map((a,i)=>`${i+1}. ${a.title} (${(a.pubDate||"").slice(0,10)})`).join("\n");
+            results.push("TOP INDIA HEADLINES:\n"+h);
+            console.log("✅ NewsData top India OK");
+          }
+        }
+      }catch(e){console.warn("NewsData top:",e.message);}
     }
-    return titles;
+
+    // Cricket/Sports
+    if(/ipl|cricket|match|score|t20|odi|test|sports/i.test(query)){
+      try{
+        const r=await sf(`https://newsdata.io/api/1/news?apikey=${newsKey}&q=IPL+cricket&country=in&language=en&size=5&category=sports`,9000);
+        if(r?.ok){
+          const d=await r.json();
+          if(d.status==="success"&&d.results?.length>0){
+            const h=d.results.slice(0,4).map((a,i)=>`${i+1}. ${a.title} (${(a.pubDate||"").slice(0,10)})`).join("\n");
+            results.push("CRICKET/IPL NEWS:\n"+h);
+            console.log("✅ NewsData cricket OK");
+          }
+        }
+      }catch(e){console.warn("NewsData cricket:",e.message);}
+    }
+  } else {
+    results.push("NOTE: Add your free NewsData.io API key in ⚙️ Settings to get real-time news. Get it free at newsdata.io");
+    console.warn("⚠️ No NewsData key");
   }
 
-  const proxy="https://api.allorigins.win/get?url=";
-
-  // ── WEATHER (Open-Meteo, no key, always works) ────────────────────
+  // ── 2. WEATHER — Open-Meteo (always free, no key) ────────────────
   if(/weather|temperature|rain|forecast|humid|hot|cold/i.test(query)){
     try{
-      const cm=query.match(/(?:weather|temperature|forecast)\s+(?:in|at|of|for)?\s*([a-zA-Z ]{2,30})/i);
+      const cm=query.match(/(?:weather|temperature|forecast|rain)\s+(?:in|at|of|for)?\s*([a-zA-Z ]{2,25})/i);
       const city=(cm?.[1]||"").replace(/[?.!]/g,"").trim()||"Surat";
-      const geo=await safeFetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`);
+      const geo=await sf(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`);
       if(geo?.ok){
         const gd=await geo.json();
         const loc=gd.results?.[0];
         if(loc){
-          const wx=await safeFetch(`https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m&timezone=auto`);
+          const wx=await sf(`https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m&timezone=auto`);
           if(wx?.ok){
-            const wd=await wx.json(); const c=wd.current;
-            const codes={0:"Clear sky",1:"Mainly clear",2:"Partly cloudy",3:"Overcast",45:"Foggy",51:"Light drizzle",61:"Rain",71:"Snow",80:"Rain showers",95:"Thunderstorm"};
-            results.push(`Live Weather — ${loc.name}: ${c.temperature_2m}°C, ${codes[c.weather_code]||"Variable"}, Humidity ${c.relative_humidity_2m}%, Wind ${c.wind_speed_10m} km/h`);
-            console.log("✅ Weather OK for",loc.name);
+            const w=await wx.json(); const c=w.current;
+            const codes={0:"Clear sky",1:"Mainly clear",2:"Partly cloudy",3:"Overcast",45:"Foggy",51:"Drizzle",61:"Rain",71:"Snow",80:"Rain showers",95:"Thunderstorm"};
+            results.push(`LIVE WEATHER ${loc.name}: ${c.temperature_2m}C, ${codes[c.weather_code]||"Variable"}, Humidity ${c.relative_humidity_2m}%, Wind ${c.wind_speed_10m} kmh`);
+            console.log("✅ Weather OK:",loc.name);
           }
         }
       }
     }catch(e){console.warn("Weather:",e.message);}
   }
 
-  // ── CURRENCY / STOCKS (open.er-api.com, no key) ───────────────────
-  if(/rupee|dollar|euro|pound|currency|exchange|usd|inr|forex|rate/i.test(query)){
+  // ── 3. CURRENCY — open.er-api.com (free, no key) ─────────────────
+  if(/rupee|dollar|euro|currency|exchange|usd|inr|forex|rate/i.test(query)){
     try{
-      const r=await safeFetch("https://open.er-api.com/v6/latest/USD");
+      const r=await sf("https://open.er-api.com/v6/latest/USD");
       if(r?.ok){
         const d=await r.json();
-        const inr=d.rates?.INR, eur=d.rates?.EUR, gbp=d.rates?.GBP;
-        results.push(`Live Rates (vs USD): ₹${inr?.toFixed(2)} INR | €${eur?.toFixed(3)} EUR | £${gbp?.toFixed(3)} GBP — Updated ${d.time_last_update_utc?.slice(5,16)}`);
-        console.log("✅ Exchange rates OK");
+        results.push(`LIVE RATES: 1 USD = Rs.${d.rates?.INR?.toFixed(2)}, EUR ${d.rates?.EUR?.toFixed(3)}, GBP ${d.rates?.GBP?.toFixed(3)}`);
+        console.log("✅ Currency OK");
       }
     }catch(e){console.warn("Currency:",e.message);}
   }
 
-  // ── GOOGLE NEWS RSS (any topic, via allorigins proxy) ────────────
-  // This is the main source for ALL news — works for cricket, politics, tech, everything
+  // ── 4. WIKIPEDIA — background facts ──────────────────────────────
   try{
-    const q=encodeURIComponent(query);
-    const feeds=[
-      // Topic-specific search
-      "https://news.google.com/rss/search?q="+q+"&hl=en-IN&gl=IN&ceid=IN:en",
-      // India top stories (always fresh)
-      "https://news.google.com/rss/headlines/section/geo/IN?hl=en-IN&gl=IN&ceid=IN:en"
-    ];
-    for(const feed of feeds){
-      const r=await safeFetch(proxy+encodeURIComponent(feed),8000);
-      if(r?.ok){
-        const d=await r.json();
-        const xml=d.contents||"";
-        if(!xml){continue;}
-        const titles=parseRSSTitles(xml,["google news","google","rss"],6);
-        if(titles.length>=2){
-          const label=feed.includes("search")?"Top News for '"+query+"'":"India Top Headlines";
-          results.push(label+":\n"+titles.map((t,i)=>`${i+1}. ${t}`).join("\n"));
-          console.log("✅ Google News RSS OK:",titles.length,"headlines from",label);
-          break; // got enough, don't need second feed
+    const clean=query.replace(/who is|what is|tell me|about|latest|news|today|happened/gi,"").replace(/[?.!]/g,"").trim();
+    if(clean.length>3){
+      const sr=await sf(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(clean)}&format=json&origin=*&srlimit=1`);
+      if(sr?.ok){
+        const sd=await sr.json();
+        const title=sd?.query?.search?.[0]?.title;
+        if(title){
+          const pr=await sf(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
+          if(pr?.ok){
+            const pg=await pr.json();
+            if(pg.extract?.length>40) results.push("BACKGROUND — "+pg.title+": "+pg.extract.slice(0,300));
+            console.log("✅ Wikipedia:",pg.title);
+          }
         }
       }
     }
-  }catch(e){console.warn("Google News:",e.message);}
+  }catch(e){console.warn("Wikipedia:",e.message);}
 
-  // ── CRICKET SCORES (cricbuzz RSS via allorigins) ──────────────────
-  if(/cricket|ipl|t20|odi|test match|match score|score|batting|bowling|wicket/i.test(query)){
-    try{
-      const feeds=[
-        "https://www.cricbuzz.com/rss-feeds/cricket-news",
-        "https://sports.ndtv.com/feeds/cricket-news",
-      ];
-      for(const feed of feeds){
-        const r=await safeFetch(proxy+encodeURIComponent(feed),8000);
-        if(r?.ok){
-          const d=await r.json();
-          const xml=d.contents||"";
-          const titles=parseRSSTitles(xml,["cricbuzz","ndtv"],5);
-          if(titles.length>=2){
-            results.push("Cricket Latest:\n"+titles.map((t,i)=>`${i+1}. ${t}`).join("\n"));
-            console.log("✅ Cricket RSS OK:",titles.length,"items");
-            break;
-          }
-        }
-      }
-    }catch(e){console.warn("Cricket RSS:",e.message);}
-  }
-
-  // ── WIKIPEDIA (facts, people, history, science) ───────────────────
-  if(results.filter(r=>r.includes("Wikipedia")).length===0){
-    try{
-      const clean=query.replace(/who is|what is|tell me about|explain|define|latest|news|today|happened/gi,"").replace(/[?.!]/g,"").trim();
-      if(clean.length>3){
-        const sr=await safeFetch(`https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(clean)}&format=json&origin=*&srlimit=1`);
-        if(sr?.ok){
-          const sd=await sr.json();
-          const title=sd?.query?.search?.[0]?.title;
-          if(title){
-            const pr=await safeFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`);
-            if(pr?.ok){
-              const pg=await pr.json();
-              if(pg.extract?.length>40){
-                results.push("Wikipedia — "+pg.title+": "+pg.extract.slice(0,350));
-                console.log("✅ Wikipedia OK:", pg.title);
-              }
-            }
-          }
-        }
-      }
-    }catch(e){console.warn("Wikipedia:",e.message);}
-  }
-
-  console.log("🔍 [SEARCH] Done. Sources found:", results.length);
+  console.log("🔍 [SEARCH] Total sources:",results.length);
   return results;
 }
 
-
-  console.log("🎤 [QUERY] startQueryListen() called | appState:", appState, "| wakeReady:", wakeReady);
+function startQueryListen(){ console.log("🎤 [QUERY] startQueryListen() called | appState:", appState, "| wakeReady:", wakeReady);
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){
     console.error("❌ [QUERY] SpeechRecognition API not supported in this browser!");
