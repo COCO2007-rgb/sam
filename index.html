@@ -156,6 +156,17 @@ textarea{height:68px;line-height:1.5}
 .sb-divider{height:1px;background:rgba(255,255,255,.06);margin:8px 18px}
 .sb-item.danger .sb-label{color:#ff5252}
 .sb-item.danger svg{opacity:.6}
+/* chat history list */
+.ch-item{display:flex;align-items:center;justify-content:space-between;padding:9px 18px;cursor:pointer;border:none;background:transparent;width:100%;text-align:left;transition:background .2s}
+.ch-item:hover{background:rgba(255,255,255,.05)}
+.ch-title{font-size:12px;color:rgba(255,255,255,.7);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
+.ch-date{font-size:9px;color:rgba(255,255,255,.3);font-family:'Space Mono',monospace;flex-shrink:0;margin-left:6px}
+.ch-del{background:transparent;border:none;color:rgba(255,82,82,.5);font-size:14px;cursor:pointer;padding:0 4px;flex-shrink:0}
+.ch-del:hover{color:#ff5252}
+#chatHistoryList{max-height:180px;overflow-y:auto}
+#chatHistoryList::-webkit-scrollbar{width:3px}
+#chatHistoryList::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:2px}
+.no-history{font-size:11px;color:rgba(255,255,255,.25);padding:8px 18px;font-family:'Space Mono',monospace}
 /* hamburger */
 #menuBtn{position:absolute;left:13px;top:max(env(safe-area-inset-top),16px);background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:3}
 
@@ -292,13 +303,17 @@ textarea{height:68px;line-height:1.5}
     <!-- New Chat -->
     <button class="sb-item" onclick="newChat()">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
-      <div><div class="sb-label">New Chat</div><div class="sb-desc">Start a fresh conversation</div></div>
+      <div><div class="sb-label">New Chat</div><div class="sb-desc">Save & start fresh</div></div>
     </button>
     <!-- Clear Chat -->
-    <button class="sb-item" onclick="clearChat();closeSidebar()">
+    <button class="sb-item" onclick="clearCurrentChat();closeSidebar()">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M10 11v6M14 11v6" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
-      <div><div class="sb-label">Clear Chat</div><div class="sb-desc">Delete all messages</div></div>
+      <div><div class="sb-label">Clear Chat</div><div class="sb-desc">Delete current chat</div></div>
     </button>
+    <div class="sb-divider"></div>
+    <!-- Chat History -->
+    <div style="padding:8px 18px 4px;font-family:'Space Mono',monospace;font-size:9px;letter-spacing:3px;color:rgba(0,229,255,.5);text-transform:uppercase">History</div>
+    <div id="chatHistoryList"></div>
     <div class="sb-divider"></div>
     <!-- Voice Commands -->
     <button class="sb-item" onclick="showCommands();closeSidebar()">
@@ -397,6 +412,37 @@ const VP={normal:{r:1.05,p:1.1},fast:{r:1.4,p:1.1},slow:{r:.8,p:1.0},high:{r:1.0
 const COLS={wake:"#4a6fa5",listening:"#ff4081",thinking:"#ffea00",speaking:"#69ff47",error:"#ff5252"};
 const LBLS={wake:"Say 'Hey SAM'…",listening:"Listening…",thinking:"Thinking…",speaking:"Speaking…",error:"Error"};
 const THRESHOLD=0.68;
+
+// ── PC BRIDGE — connects to local Python server for PC control ──
+const BRIDGE_URL="http://localhost:7842";
+let bridgeAvailable=false;
+
+async function checkBridge(){
+  try{
+    const r=await fetch(BRIDGE_URL+"/ping",{signal:AbortSignal.timeout(1500)});
+    if(r.ok){ bridgeAvailable=true; console.log("✅ [BRIDGE] SAM PC Bridge connected!"); return true; }
+  }catch(e){ bridgeAvailable=false; }
+  return false;
+}
+
+async function pcCommand(cmd, args=""){
+  if(!bridgeAvailable){ await checkBridge(); }
+  if(!bridgeAvailable){
+    return {success:false, reply:"SAM PC Bridge is not running. Please start SAM_BRIDGE.bat on your PC first."};
+  }
+  try{
+    const r=await fetch(BRIDGE_URL+"/command",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({command:cmd, args:args}),
+      signal:AbortSignal.timeout(5000)
+    });
+    return await r.json();
+  }catch(e){
+    bridgeAvailable=false;
+    return {success:false, reply:"PC Bridge disconnected. Please restart SAM_BRIDGE.bat."};
+  }
+}
 
 // ── CONTACTS — loaded live from phone via Contacts API ──────────
 // No manual entry needed! SAM reads your phone contacts directly.
@@ -556,6 +602,7 @@ function launchMain(){
   console.log("🚀 [MAIN] launchMain() | cfg:", JSON.stringify({name:cfg.assistantName,personality:cfg.personality,voiceLock:cfg.voiceLock}));
   hide("setupScreen"); hide("enrollScreen"); show("mainScreen");
   const sbU=g("sbUserName"); if(sbU&&cfg.userName) sbU.textContent="👤 "+cfg.userName;
+  loadSessions(); renderChatHistory();
   document.getElementById("headerTitle").textContent=cfg.assistantName.toUpperCase();
   document.documentElement.style.setProperty("--c",cfg.accentColor||"#00e5ff");
   g("wakeHint").innerHTML=`Say <strong style="color:#6fa3d9">"Hey ${cfg.assistantName}"</strong> to activate`;
@@ -567,6 +614,12 @@ function launchMain(){
   console.log("💬 [MAIN] Loaded", messages.length, "messages from history");
   renderAll();
   console.log("🎙️ [MAIN] Requesting microphone permission...");
+  // Check if PC bridge is running
+  checkBridge().then(ok=>{
+    if(ok) console.log("✅ PC Bridge ready — PC commands enabled");
+    else console.log("ℹ️ PC Bridge not running — PC commands disabled");
+  });
+
   navigator.mediaDevices.getUserMedia({audio:true})
     .then(stream=>{
       console.log("✅ [MAIN] Mic permission GRANTED | tracks:", stream.getAudioTracks().length);
@@ -792,13 +845,19 @@ async function processCommand(txt){
     console.log("📞 [CMD] Call intent for:", who);
 
     async function doCall(){
-      // load contacts if not yet loaded
+      // if Contacts API not available or already loaded — skip popup
+      if(!("contacts" in navigator)){
+        // No Contact Picker API — dial directly by name (works on Android phone dialer)
+        console.log("📞 No Contact API — dialling by name directly");
+        samSay(`Calling ${who}!`,()=>setTimeout(()=>{window.location.href="tel:"+encodeURIComponent(who);},600));
+        return;
+      }
       if(deviceContacts.length===0){
-        samSay("Let me access your contacts first.");
+        // First time — need to request contacts
+        samSay("Please select your contacts so I can call them.");
         const loaded=await loadContacts();
         if(!loaded||loaded.length===0){
-          // Contacts API not supported — fallback to tel: directly
-          samSay(`Dialling ${who} now!`,()=>setTimeout(()=>window.location.href="tel:"+encodeURIComponent(who),700));
+          samSay(`Dialling ${who} directly!`,()=>setTimeout(()=>window.location.href="tel:"+encodeURIComponent(who),600));
           return;
         }
       }
@@ -849,24 +908,121 @@ async function processCommand(txt){
   }
 
   // ── 2. ON-DEVICE / SYSTEM COMMANDS ──────────────────────────────
-  const SYSTEM_CMDS={
-    "go home":()=>history.go(-(history.length-1)),
-    "go back":()=>history.back(),
-    "go forward":()=>history.forward(),
-    "refresh":()=>location.reload(),
-    "reload":()=>location.reload(),
-    "scroll up":()=>document.getElementById("chat").scrollBy({top:-200,behavior:"smooth"}),
-    "scroll down":()=>document.getElementById("chat").scrollBy({top:200,behavior:"smooth"}),
-    "clear chat":()=>clearChat(),
-    "new chat":()=>newChat(),
-    "open settings":()=>openSettings(),
-    "close":()=>window.close(),
-    "take screenshot":()=>samSay("Screenshot is a device feature — press the power and volume down buttons together."),
-    "increase volume":()=>samSay("I can't control volume directly, but you can use your device volume buttons."),
-    "mute":()=>samSay("I can't mute your device, but you can press the volume button."),
-  };
-  for(const [cmd,fn] of Object.entries(SYSTEM_CMDS)){
-    if(lower.includes(cmd)){ samSay(`OK, ${cmd}!`,fn); return; }
+  // ── SAM app commands (things SAM can actually control) ──────────
+  const APP_CMDS=[
+    {k:["go back","previous page"],fn:()=>history.back(),r:"Going back!"},
+    {k:["go forward"],fn:()=>history.forward(),r:"Going forward!"},
+    {k:["refresh","reload page","reload"],fn:()=>location.reload(),r:"Refreshing!"},
+    {k:["scroll up"],fn:()=>g("chat").scrollBy({top:-200,behavior:"smooth"}),r:"Scrolling up!"},
+    {k:["scroll down"],fn:()=>g("chat").scrollBy({top:200,behavior:"smooth"}),r:"Scrolling down!"},
+    {k:["clear chat","delete chat"],fn:()=>clearChat(),r:"Chat cleared!"},
+    {k:["new chat","start over","fresh start"],fn:()=>newChat(),r:"Starting a new chat!"},
+    {k:["open settings","settings"],fn:()=>openSettings(),r:"Opening settings!"},
+    {k:["stop","cancel","never mind","stop listening"],fn:()=>{synth.cancel();setOrb("wake");startWakeLoop();},r:"Stopped!"},
+  ];
+  for(const cmd of APP_CMDS){
+    if(cmd.k.some(k=>lower.includes(k))){ samSay(cmd.r,cmd.fn); return; }
+  }
+
+  // ── PC COMMANDS (via SAM Bridge running on your PC) ─────────────
+  const PC_CMDS=[
+    // Desktop
+    {k:["go to desktop","show desktop","minimize all","go desktop"],
+     fn:async()=>{const r=await pcCommand("show_desktop");samSay(r.reply);}},
+    // Drives
+    {k:["open c drive","open c:"],
+     fn:async()=>{const r=await pcCommand("open_drive","C");samSay(r.reply);}},
+    {k:["open d drive","open d:"],
+     fn:async()=>{const r=await pcCommand("open_drive","D");samSay(r.reply);}},
+    {k:["open e drive","open e:"],
+     fn:async()=>{const r=await pcCommand("open_drive","E");samSay(r.reply);}},
+    {k:["open f drive","open f:"],
+     fn:async()=>{const r=await pcCommand("open_drive","F");samSay(r.reply);}},
+    // Common folders
+    {k:["open downloads","open download folder"],
+     fn:async()=>{const r=await pcCommand("open_folder","Downloads");samSay(r.reply);}},
+    {k:["open documents","open document folder"],
+     fn:async()=>{const r=await pcCommand("open_folder","Documents");samSay(r.reply);}},
+    {k:["open desktop folder","open desktop files"],
+     fn:async()=>{const r=await pcCommand("open_folder","Desktop");samSay(r.reply);}},
+    {k:["open pictures","open photos folder"],
+     fn:async()=>{const r=await pcCommand("open_folder","Pictures");samSay(r.reply);}},
+    {k:["open music folder"],
+     fn:async()=>{const r=await pcCommand("open_folder","Music");samSay(r.reply);}},
+    {k:["open videos folder","open video folder"],
+     fn:async()=>{const r=await pcCommand("open_folder","Videos");samSay(r.reply);}},
+    {k:["open my computer","open this pc","open file explorer"],
+     fn:async()=>{const r=await pcCommand("open_folder","this pc");samSay(r.reply);}},
+    // Apps
+    {k:["open notepad"],fn:async()=>{const r=await pcCommand("open_app","Notepad");samSay(r.reply);}},
+    {k:["open calculator","open calc"],fn:async()=>{const r=await pcCommand("open_app","Calculator");samSay(r.reply);}},
+    {k:["open paint"],fn:async()=>{const r=await pcCommand("open_app","Paint");samSay(r.reply);}},
+    {k:["open word","open microsoft word"],fn:async()=>{const r=await pcCommand("open_app","Word");samSay(r.reply);}},
+    {k:["open excel","open microsoft excel"],fn:async()=>{const r=await pcCommand("open_app","Excel");samSay(r.reply);}},
+    {k:["open powerpoint"],fn:async()=>{const r=await pcCommand("open_app","PowerPoint");samSay(r.reply);}},
+    {k:["open task manager"],fn:async()=>{const r=await pcCommand("open_app","Task Manager");samSay(r.reply);}},
+    {k:["open settings","open windows settings"],fn:async()=>{const r=await pcCommand("open_app","Settings");samSay(r.reply);}},
+    {k:["open command prompt","open cmd"],fn:async()=>{const r=await pcCommand("open_app","cmd");samSay(r.reply);}},
+    {k:["open vs code","open vscode"],fn:async()=>{const r=await pcCommand("open_app","VS Code");samSay(r.reply);}},
+    {k:["open vlc"],fn:async()=>{const r=await pcCommand("open_app","VLC");samSay(r.reply);}},
+    {k:["open zoom"],fn:async()=>{const r=await pcCommand("open_app","Zoom");samSay(r.reply);}},
+    // System
+    {k:["shutdown","shut down pc","turn off pc"],
+     fn:async()=>{const r=await pcCommand("shutdown");samSay(r.reply);}},
+    {k:["restart pc","reboot"],
+     fn:async()=>{const r=await pcCommand("restart");samSay(r.reply);}},
+    {k:["sleep pc","put pc to sleep"],
+     fn:async()=>{const r=await pcCommand("sleep");samSay(r.reply);}},
+    {k:["lock pc","lock computer"],
+     fn:async()=>{const r=await pcCommand("lock");samSay(r.reply);}},
+    {k:["take screenshot","screenshot","capture screen"],
+     fn:async()=>{const r=await pcCommand("screenshot");samSay(r.reply);}},
+    // Volume
+    {k:["increase volume","volume up","louder"],
+     fn:async()=>{const r=await pcCommand("volume_up");samSay(r.reply);}},
+    {k:["decrease volume","volume down","quieter","lower volume"],
+     fn:async()=>{const r=await pcCommand("volume_down");samSay(r.reply);}},
+    {k:["mute","mute pc","mute volume"],
+     fn:async()=>{const r=await pcCommand("mute");samSay(r.reply);}},
+    // Brightness
+    {k:["increase brightness","brightness up"],
+     fn:async()=>{const r=await pcCommand("brightness_up");samSay(r.reply);}},
+    {k:["decrease brightness","brightness down","dim screen"],
+     fn:async()=>{const r=await pcCommand("brightness_down");samSay(r.reply);}},
+  ];
+
+  // Check PC bridge commands first
+  for(const cmd of PC_CMDS){
+    if(cmd.k.some(k=>lower.includes(k))){ cmd.fn(); return; }
+  }
+
+  // Search files on PC
+  const searchFilesMatch=lower.match(/^(?:search files?|find files?|search on pc|find on pc)\s+(.+)$/i);
+  if(searchFilesMatch){
+    const q=searchFilesMatch[1];
+    pcCommand("search_files",q).then(r=>samSay(r.reply));
+    return;
+  }
+
+  // Open any specific app by name: "open vlc", "open photoshop" etc.
+  const openAppMatch=lower.match(/^open\s+(.+)$/i);
+  if(openAppMatch){
+    const appName=openAppMatch[1].trim();
+    // Check if it's NOT a known website
+    const knownSites=["youtube","instagram","facebook","twitter","google","gmail","maps","amazon","flipkart","netflix","spotify","github","wikipedia","news","cricket","chatgpt","translate","linkedin","reddit","snapchat","telegram","pinterest","quora","whatsapp"];
+    const isSite=knownSites.some(s=>appName.toLowerCase().includes(s));
+    if(!isSite){
+      // Try bridge first (PC app), fallback to website
+      pcCommand("open_app",appName).then(r=>{
+        if(r.success){ samSay(r.reply); }
+        else{
+          // fallback: open as website
+          const url=`https://${appName.replace(/\s+/g,"")}.com`;
+          samSay(`Opening ${appName}!`,()=>setTimeout(()=>window.open(url,"_blank"),700));
+        }
+      });
+      return;
+    }
   }
 
   // ── 3. OPEN WEBSITE / APP WITH SMART PARSING ─────────────────────
@@ -1060,7 +1216,7 @@ async function askClaude(txt){
   const todayStr=new Date().toLocaleDateString("en-IN",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
 
   // detect if this needs real-time web data
-  const needsWeb=/(score|match|live|today|yesterday|news|weather|result|winner|won|lost|latest|current|right now|price|stock|trending|who won|which team|ipl|cricket|football|fifa|nba|f1|grand prix|election|update|happening|last match|recent|this week)/i.test(txt);
+  const needsWeb=/(score|match|live|today|yesterday|news|weather|result|winner|won|lost|latest|current|right now|price|stock|trending|who won|which team|ipl|cricket|football|fifa|nba|f1|grand prix|election|update|happening|last match|recent|this week|paper leak|neet|exam|incident|accident|attack|protest|flood|earthquake|fire|death|murder|politics|government|minister|modi|rahul|court|verdict|arrested|launched|released|announced)/i.test(txt);
   console.log("📤 [AI] needsWeb:", needsWeb);
 
   try{
@@ -1079,12 +1235,12 @@ async function askClaude(txt){
       }
     }
 
-    const isCodeReq=/(code|program|function|script|write|build|create|implement|algorithm|html|css|javascript|python|java|cpp|sql|regex|snippet)/i.test(txt);
-    const maxTok=isCodeReq?4000:300;
+    const isCodeReq=/(code|program|function|script|write|build|create|implement|algorithm|html|css|javascript|python|java|cpp|sql|regex|snippet|class|loop|array|sort|search|api|database|query)/i.test(txt);
+    const maxTok=isCodeReq?8000:400;
 
     const systemMsg=prompt()+"\n\nToday is "+todayStr+"."+contextBlock+(isCodeReq?
-      "\n\nCODE MODE: Give COMPLETE working code — never truncate, never say 'rest of code here'. Always use fenced code blocks with language. Add brief explanation after.":
-      "\n\nIMPORTANT: NEVER say you don't have real-time data. Use the data above. Keep reply to 2-3 short sentences for voice.");
+      "\n\nCODE MODE RULES:\n1. Give COMPLETE 100% working code — NEVER truncate, NEVER say 'rest of code', NEVER say '...', NEVER say 'add more code here'.\n2. Always use fenced code blocks with language tag e.g. ```python\n3. Write every single line of code needed.\n4. If code is long, still write ALL of it.\n5. Brief explanation after the code block.":
+      "\n\nRULES:\n1. NEVER say you don't have real-time data — data is fetched above, USE IT.\n2. Give specific facts, names, scores from the data above.\n3. Keep reply to 2-3 short sentences for voice.\n4. If news data has specific names/scores, mention them.");
 
     const res=await fetch("https://api.groq.com/openai/v1/chat/completions",{
       method:"POST",
@@ -1140,12 +1296,78 @@ function closeSidebar(){
   g("sidebar").classList.remove("open");
   g("sideOverlay").classList.remove("open");
 }
+// ── CHAT SESSIONS ────────────────────────────────────────────────
+let chatSessions=[];   // [{id,title,date,messages}]
+let currentSessionId=null;
+
+function loadSessions(){
+  try{ chatSessions=JSON.parse(localStorage.getItem("sam_sessions")||"[]"); }
+  catch{ chatSessions=[]; }
+}
+function saveSessions(){
+  try{ localStorage.setItem("sam_sessions",JSON.stringify(chatSessions.slice(-20))); }
+  catch{}
+}
+function saveCurrentSession(){
+  if(!messages.length) return;
+  const title=messages.find(m=>m.role==="user")?.content?.slice(0,40)||"Chat";
+  const date=new Date().toLocaleDateString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
+  if(currentSessionId){
+    const idx=chatSessions.findIndex(s=>s.id===currentSessionId);
+    if(idx>=0){ chatSessions[idx].messages=messages; chatSessions[idx].title=title; }
+    else{ chatSessions.push({id:currentSessionId,title,date,messages:[...messages]}); }
+  } else {
+    currentSessionId=Date.now().toString();
+    chatSessions.push({id:currentSessionId,title,date,messages:[...messages]});
+  }
+  saveSessions();
+  renderChatHistory();
+}
+function renderChatHistory(){
+  loadSessions();
+  const list=g("chatHistoryList"); if(!list) return;
+  if(!chatSessions.length){
+    list.innerHTML=`<div class="no-history">No saved chats yet</div>`; return;
+  }
+  list.innerHTML=[...chatSessions].reverse().map(s=>`
+    <div class="ch-item" onclick="loadSession('${s.id}')">
+      <span class="ch-title">${esc(s.title)}</span>
+      <span class="ch-date">${s.date}</span>
+      <button class="ch-del" onclick="event.stopPropagation();deleteSession('${s.id}')" title="Delete">🗑</button>
+    </div>`).join("");
+}
+function loadSession(id){
+  saveCurrentSession();
+  const s=chatSessions.find(x=>x.id===id); if(!s) return;
+  currentSessionId=id;
+  messages=[...s.messages];
+  messagesRef={current:messages};
+  renderAll(); closeSidebar();
+  const r=`Loaded your chat: "${s.title}"`;
+  addBubble({role:"sam",content:r}); speak(r,()=>{setOrb("wake");startWakeLoop();});
+}
+function deleteSession(id){
+  chatSessions=chatSessions.filter(s=>s.id!==id);
+  saveSessions(); renderChatHistory();
+  if(currentSessionId===id){ currentSessionId=null; }
+}
+
 function newChat(){
-  messages=[];save();renderAll();closeSidebar();
-  const reply="Starting fresh! What can I help you with?";
+  if(messages.length) saveCurrentSession(); // save current before starting new
+  currentSessionId=null;
+  messages=[];
+  try{localStorage.removeItem("sam_h_"+(cfg.assistantName||"SAM"));}catch{}
+  renderAll(); closeSidebar();
+  const reply="New chat started! What can I help you with?";
   addBubble({role:"sam",content:reply});
-  messages.push({role:"sam",content:reply}); save();
+  messages.push({role:"sam",content:reply});
   speak(reply,()=>{setOrb("wake");startWakeLoop();});
+}
+function clearCurrentChat(){
+  currentSessionId=null;
+  messages=[];
+  try{localStorage.removeItem("sam_h_"+(cfg.assistantName||"SAM"));}catch{}
+  renderAll();
 }
 function signOut(){
   if(!confirm("Sign out and clear all data?"))return;
@@ -1448,17 +1670,23 @@ function startWakeLoop(){
       console.log("✅ [WAKE] Voice ACCEPTED");
     }
 
-    // acknowledge and listen
-    console.log("🟢 [WAKE] Waking SAM up...");
+    // instant activation — no TTS delay, just beep via AudioContext and start listening
+    console.log("🟢 [WAKE] Waking SAM up — INSTANT activation");
     showToast(); synth.cancel();
-    const ack=new SpeechSynthesisUtterance("Mm-hmm?");
-    const v=VP[cfg.voiceStyle]||VP.normal; ack.rate=v.r*1.1; ack.pitch=v.p; ack.volume=0.7;
-    const vs=synth.getVoices();
-    const pv=vs.find(v=>/samantha|karen|victoria|female|zira/i.test(v.name))||vs[0];
-    if(pv){ ack.voice=pv; console.log("🔊 [WAKE] Ack voice:", pv.name); }
-    ack.onend=()=>{ console.log("🎙️ [WAKE] Ack done → query listen"); startQueryListen(); };
-    ack.onerror=()=>{ console.warn("⚠️ [WAKE] Ack TTS error → query listen anyway"); startQueryListen(); };
-    synth.speak(ack);
+    // play a quick audio beep instead of TTS (much faster)
+    try{
+      const ac=new(window.AudioContext||window.webkitAudioContext)();
+      const osc=ac.createOscillator();
+      const gain=ac.createGain();
+      osc.connect(gain); gain.connect(ac.destination);
+      osc.type="sine"; osc.frequency.setValueAtTime(880,ac.currentTime);
+      gain.gain.setValueAtTime(0.15,ac.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+0.12);
+      osc.start(ac.currentTime); osc.stop(ac.currentTime+0.12);
+      osc.onended=()=>ac.close();
+    }catch(e){ console.warn("Beep failed:",e.message); }
+    // start listening after tiny gap (50ms) so beep doesn't interfere with mic
+    setTimeout(()=>startQueryListen(), 50);
   };
 
   r.onerror=e=>{
@@ -1529,8 +1757,12 @@ function stopAll(){
   if(queryRecog){ queryRecog.onend=null; queryRecog.onerror=null; try{queryRecog.abort();}catch{} queryRecog=null; }
   wakeReady=false;
 }
-function clearChat(){messages=[];save();renderAll();}
-function save(){try{localStorage.setItem("sam_h_"+(cfg.assistantName||"SAM"),JSON.stringify(messages.slice(-60)));}catch{}}
+function clearChat(){clearCurrentChat();}
+function save(){
+  try{localStorage.setItem("sam_h_"+(cfg.assistantName||"SAM"),JSON.stringify(messages.slice(-60)));}catch{}
+  // auto-save session every 5 messages
+  if(messages.length>0&&messages.length%5===0) saveCurrentSession();
+}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function avg(a){return a.reduce((s,v)=>s+v,0)/a.length;}
 function std(a){const m=avg(a);return Math.sqrt(avg(a.map(v=>(v-m)**2)));}
