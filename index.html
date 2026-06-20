@@ -216,6 +216,12 @@ textarea{height:68px;line-height:1.5}
     <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:6px;line-height:1.5">200 free requests/day. Enables live news, IPL scores, breaking news.</div>
   </div>
   <div class="sec">
+    <h3>🖥️ PC Bridge URL (PC only)</h3>
+    <div class="fl">Leave blank if using on PC with bridge running locally. Only needed if using <strong style="color:#00e5ff">ngrok</strong> tunnel.</div>
+    <input type="text" id="bridgeUrl" placeholder="https://xxxx.ngrok-free.app (optional)" autocomplete="off" spellcheck="false"/>
+    <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:6px;line-height:1.5">Default: http://localhost:7842 — works automatically if bridge is running on this PC.</div>
+  </div>
+  <div class="sec">
     <h3>Personality</h3>
     <div class="pg" id="pg">
       <div class="pc sel" data-p="friendly" onclick="selP(this)"><div class="em">😊</div><div class="pn">Friendly</div><div class="pd">Warm & helpful</div></div>
@@ -419,37 +425,61 @@ const IS_PC=!IS_MOBILE;
 console.log("📱 Device type:", IS_MOBILE?"Mobile":"PC");
 
 // ── PC BRIDGE — only used on PC ───────────────────────────────────
-const BRIDGE_URL="http://localhost:7842";
+function getBridgeUrl(){
+  const custom=(cfg.bridgeUrl||"").trim().replace(/\/$/,"");
+  return custom || "http://localhost:7842";
+}
 let bridgeAvailable=false;
 
 async function checkBridge(){
   if(IS_MOBILE){ console.log("📱 Mobile — skipping bridge check"); return false; }
+  const url=getBridgeUrl();
+  const isHttpsPage=location.protocol==="https:";
+  const isHttpBridge=url.startsWith("http://")&&!url.includes("localhost")&&!url.includes("127.0.0.1");
+  if(isHttpsPage && url.startsWith("http://") && !url.includes("localhost") && !url.includes("127.0.0.1")){
+    console.warn("⚠️ [BRIDGE] Mixed content: HTTPS page cannot call non-localhost HTTP URL. Use ngrok HTTPS URL instead.");
+  }
   try{
-    const r=await fetch(BRIDGE_URL+"/ping",{signal:AbortSignal.timeout(1500)});
-    if(r.ok){ bridgeAvailable=true; console.log("✅ [BRIDGE] PC Bridge connected!"); return true; }
-  }catch(e){ bridgeAvailable=false; }
+    const r=await fetch(url+"/ping",{signal:AbortSignal.timeout(2000)});
+    if(r.ok){ bridgeAvailable=true; console.log("✅ [BRIDGE] Connected at",url); return true; }
+    console.warn("⚠️ [BRIDGE] Ping responded but not ok, status:",r.status);
+  }catch(e){
+    bridgeAvailable=false;
+    if(isHttpsPage && url.startsWith("http://localhost")){
+      console.warn("⚠️ [BRIDGE] Could not reach "+url+". If this SAM page is on HTTPS (GitHub Pages), most browsers DO allow localhost as a special exception — but some (like Brave with strict shields) still block it. If commands keep failing, use ngrok: run 'ngrok http 7842' on your PC and paste the https://xxxx.ngrok-free.app link into Settings → PC Bridge URL.");
+    } else {
+      console.warn("⚠️ [BRIDGE] Connection failed:",e.message,"| Is sam_bridge.py running? URL tried:",url);
+    }
+  }
   return false;
 }
 
 async function pcCommand(cmd, args=""){
   if(IS_MOBILE){
-    return {success:false, reply:"This command only works on PC. On mobile, I can call contacts, search the web, and open websites instead."};
+    return {success:false, reply:"That only works on PC. On mobile I can call contacts, open apps, search the web, check weather and news instead!"};
   }
   if(!bridgeAvailable){ await checkBridge(); }
   if(!bridgeAvailable){
-    return {success:false, reply:"SAM PC Bridge is not running. Open VS Code and run python sam_bridge.py first."};
+    return {success:false, reply:"PC Bridge is not connected. Run 'python sam_bridge.py' in VS Code terminal on this PC, then try again."};
   }
   try{
-    const r=await fetch(BRIDGE_URL+"/command",{
+    const r=await fetch(getBridgeUrl()+"/command",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({command:cmd, args:args}),
-      signal:AbortSignal.timeout(5000)
+      signal:AbortSignal.timeout(6000)
     });
-    return await r.json();
+    if(!r.ok){
+      console.error("❌ [BRIDGE] /command HTTP",r.status);
+      return {success:false, reply:"Bridge responded with an error. Check the terminal running sam_bridge.py for details."};
+    }
+    const data=await r.json();
+    console.log("✅ [BRIDGE] command result:",data);
+    return data;
   }catch(e){
+    console.error("❌ [BRIDGE] command request failed:",e.message);
     bridgeAvailable=false;
-    return {success:false, reply:"PC Bridge disconnected. Please restart SAM_BRIDGE.bat."};
+    return {success:false, reply:"Lost connection to PC Bridge. Make sure sam_bridge.py is still running, then try again."};
   }
 }
 
@@ -525,6 +555,7 @@ function startApp(){
     personality:selPers,voiceStyle:selVoice,accentColor:selColor,
     apiKey:g("apiKey").value.trim(),
     newsKey:g("newsKey").value.trim(),
+    bridgeUrl:g("bridgeUrl").value.trim(),
     customCtx:g("customCtx").value.trim(),voiceLock:lockOn};
   localStorage.setItem("sam_cfg",JSON.stringify(cfg));
   if(lockOn&&!voiceProfile){hide("setupScreen");show("enrollScreen");}
@@ -539,6 +570,7 @@ function loadCfgUI(){
   g("userName").value=cfg.userName||"";
   g("apiKey").value=cfg.apiKey||"";
   g("newsKey").value=cfg.newsKey||"";
+  g("bridgeUrl").value=cfg.bridgeUrl||"";
   g("customCtx").value=cfg.customCtx||"";
   document.querySelectorAll(".pc").forEach(c=>{if(c.dataset.p===cfg.personality)c.click();});
   document.querySelectorAll(".vc").forEach(c=>{if(c.dataset.v===cfg.voiceStyle)c.click();});
@@ -862,51 +894,59 @@ async function processCommand(txt){
   }
 
   // ── 1. CALL ───────────────────────────────────────────────────────
+  // IMPORTANT: Browsers are NOT allowed to place a phone call automatically —
+  // this is a hard security restriction on every browser (Chrome, Safari, etc).
+  // The tel: link OPENS the dialer with the number pre-filled.
+  // The user still needs one tap on the green call button to actually dial.
+  // This is the same behaviour as Siri/Google Assistant web links — true
+  // "auto-dial with zero taps" is only possible from a native phone app.
   const callMatch=lower.match(/^(?:call|phone|dial|ring)\s+(.+)$/i);
   if(callMatch){
     const who=callMatch[1].trim().toLowerCase();
     console.log("📞 [CMD] Call intent for:", who);
 
+    function ringPhone(number, label){
+      // Vibrate as a "ringing" cue on mobile
+      if(navigator.vibrate) navigator.vibrate([150,80,150]);
+      window.location.href="tel:"+number;
+      console.log("📞 [CMD] tel: link triggered for",label,number);
+    }
+
     async function doCall(){
-      // if Contacts API not available or already loaded — skip popup
       if(!("contacts" in navigator)){
-        // No Contact Picker API — dial directly by name (works on Android phone dialer)
-        console.log("📞 No Contact API — dialling by name directly");
-        samSay(`Calling ${who}!`,()=>setTimeout(()=>{window.location.href="tel:"+encodeURIComponent(who);},600));
+        console.log("📞 No Contact Picker API — opening dialer with name/number typed");
+        samSay(`Opening the dialer for ${who} — just tap the green call button to connect!`,
+          ()=>setTimeout(()=>ringPhone(encodeURIComponent(who),who),500));
         return;
       }
       if(deviceContacts.length===0){
-        // First time — need to request contacts
-        samSay("Please select your contacts so I can call them.");
+        samSay("One sec — please select your contacts so I can find their number.");
         const loaded=await loadContacts();
         if(!loaded||loaded.length===0){
-          samSay(`Dialling ${who} directly!`,()=>setTimeout(()=>window.location.href="tel:"+encodeURIComponent(who),600));
+          samSay(`Opening dialer for ${who}!`,()=>setTimeout(()=>ringPhone(encodeURIComponent(who),who),500));
           return;
         }
       }
 
       const matches=findContacts(who);
-      console.log("📞 [CMD] Matches found:", matches.length, matches.map(c=>c.name[0]));
+      console.log("📞 [CMD] Matches:", matches.length, matches.map(c=>c.name[0]));
 
       if(matches.length===0){
-        samSay(`I could not find ${who} in your contacts. Please check the name and try again.`);
+        samSay(`I could not find ${who} in your contacts. Check the name and try again.`);
       } else if(matches.length===1){
         const name=matches[0].name[0];
         const numbers=matches[0].tel;
         if(numbers.length===1){
-          // single contact, single number — call directly no confirmation
-          samSay(`Calling ${name}!`,()=>setTimeout(()=>window.location.href="tel:"+numbers[0],700));
+          samSay(`Calling ${name} — tap the green button to connect!`,
+            ()=>setTimeout(()=>ringPhone(numbers[0],name),500));
         } else {
-          // one contact but multiple numbers — ask which one
           const numList=numbers.map((n,i)=>`${i+1}: ${n}`).join(", ");
-          samSay(`${name} has ${numbers.length} numbers: ${numList}. Say the number like "call number 1" or "call number 2".`);
-          // store pending call so user can say "call number 1"
+          samSay(`${name} has ${numbers.length} numbers: ${numList}. Say "call number 1" or "call number 2".`);
           pendingCallNumbers={name,numbers};
         }
       } else {
-        // multiple contacts matched — ask which one
         const nameList=matches.map((c,i)=>`${i+1}: ${c.name[0]}`).join(", ");
-        samSay(`I found ${matches.length} contacts: ${nameList}. Say the number like "call number 1".`);
+        samSay(`I found ${matches.length} contacts: ${nameList}. Say "call number 1".`);
         pendingCallNumbers={name:who,numbers:matches.map(c=>({label:c.name[0],number:c.tel[0]}))};
       }
     }
@@ -923,7 +963,8 @@ async function processCommand(txt){
       const num=typeof p.numbers[idx]==="object"?p.numbers[idx].number:p.numbers[idx];
       const label=typeof p.numbers[idx]==="object"?p.numbers[idx].label:p.name;
       pendingCallNumbers=null;
-      samSay(`Calling ${label}!`,()=>setTimeout(()=>window.location.href="tel:"+num,700));
+      samSay(`Calling ${label} — tap the green button to connect!`,
+        ()=>setTimeout(()=>{ if(navigator.vibrate)navigator.vibrate([150,80,150]); window.location.href="tel:"+num; },500));
     } else {
       samSay(`I only have ${p.numbers.length} options. Say a number between 1 and ${p.numbers.length}.`);
     }
@@ -1517,60 +1558,81 @@ async function fetchRealTimeData(query){
   console.log("🔍 [SEARCH] Fetching for:", query);
 
   async function sf(url,ms=8000){
-    try{ const r=await fetch(url,{signal:AbortSignal.timeout(ms)}); return r; }
-    catch(e){ console.warn("fetch err:",url.slice(0,50),e.message); return null; }
+    try{
+      const r=await fetch(url,{signal:AbortSignal.timeout(ms)});
+      if(!r.ok) console.warn("⚠️ HTTP",r.status,"for",url.slice(0,60));
+      return r;
+    }catch(e){ console.warn("❌ fetch failed:",url.slice(0,60),"|",e.message); return null; }
   }
 
   // ── 1. NEWSDATA.IO — primary source for all real-time news ──────
   const newsKey=(cfg.newsKey||"").trim();
+  let newsKeyWorked=false;
   if(newsKey){
     // Search-specific news
     try{
-      const q=encodeURIComponent(query.replace(/what|happened|latest|tell me|about|in the last|24 hours/gi,"").trim()||"India");
+      const q=encodeURIComponent(query.replace(/what|happened|latest|tell me|about|in the last|24 hours|please|can you|me/gi,"").trim()||"India");
       const r=await sf(`https://newsdata.io/api/1/news?apikey=${newsKey}&q=${q}&country=in&language=en&size=5`,9000);
-      if(r?.ok){
+      if(r){
         const d=await r.json();
-        console.log("NewsData status:",d.status,"count:",d.results?.length);
+        console.log("📰 NewsData query response:",d.status,"| results:",d.results?.length,"| message:",d.message||d.results?.message||"");
         if(d.status==="success"&&d.results?.length>0){
           const h=d.results.slice(0,5).map((a,i)=>`${i+1}. ${a.title} [${a.source_id||"news"}] (${(a.pubDate||"").slice(0,10)})`).join("\n");
           results.push("LIVE NEWS:\n"+h);
-          console.log("✅ NewsData query OK");
+          newsKeyWorked=true;
+          console.log("✅ NewsData query OK,",d.results.length,"articles");
+        } else if(d.status==="error"){
+          console.error("❌ NewsData API error:",JSON.stringify(d.results||d.message||d));
         }
+      } else {
+        console.error("❌ NewsData fetch returned null (network/CORS issue)");
       }
-    }catch(e){console.warn("NewsData:",e.message);}
+    }catch(e){console.warn("NewsData query exception:",e.message);}
 
-    // Top India headlines for general queries
-    if(/india|happened|today|news|update|breaking|latest|current/i.test(query)){
+    // Top India headlines for general queries — ALWAYS fetch this as a strong fallback
+    if(results.length===0 || /india|happened|today|news|update|breaking|latest|current/i.test(query)){
       try{
-        const r=await sf(`https://newsdata.io/api/1/news?apikey=${newsKey}&country=in&language=en&size=5&category=top`,9000);
-        if(r?.ok){
+        const r=await sf(`https://newsdata.io/api/1/news?apikey=${newsKey}&country=in&language=en&size=6&category=top`,9000);
+        if(r){
           const d=await r.json();
+          console.log("📰 NewsData top headlines:",d.status,"| count:",d.results?.length);
           if(d.status==="success"&&d.results?.length>0){
-            const h=d.results.slice(0,5).map((a,i)=>`${i+1}. ${a.title} (${(a.pubDate||"").slice(0,10)})`).join("\n");
+            const h=d.results.slice(0,6).map((a,i)=>`${i+1}. ${a.title} (${(a.pubDate||"").slice(0,10)})`).join("\n");
             results.push("TOP INDIA HEADLINES:\n"+h);
+            newsKeyWorked=true;
             console.log("✅ NewsData top India OK");
+          } else if(d.status==="error"){
+            console.error("❌ NewsData top error:",JSON.stringify(d.results||d.message||d));
           }
         }
-      }catch(e){console.warn("NewsData top:",e.message);}
+      }catch(e){console.warn("NewsData top exception:",e.message);}
     }
 
     // Cricket/Sports
     if(/ipl|cricket|match|score|t20|odi|test|sports/i.test(query)){
       try{
         const r=await sf(`https://newsdata.io/api/1/news?apikey=${newsKey}&q=IPL+cricket&country=in&language=en&size=5&category=sports`,9000);
-        if(r?.ok){
+        if(r){
           const d=await r.json();
+          console.log("📰 NewsData cricket:",d.status,"| count:",d.results?.length);
           if(d.status==="success"&&d.results?.length>0){
             const h=d.results.slice(0,4).map((a,i)=>`${i+1}. ${a.title} (${(a.pubDate||"").slice(0,10)})`).join("\n");
             results.push("CRICKET/IPL NEWS:\n"+h);
+            newsKeyWorked=true;
             console.log("✅ NewsData cricket OK");
+          } else if(d.status==="error"){
+            console.error("❌ NewsData cricket error:",JSON.stringify(d.results||d.message||d));
           }
         }
-      }catch(e){console.warn("NewsData cricket:",e.message);}
+      }catch(e){console.warn("NewsData cricket exception:",e.message);}
+    }
+
+    if(!newsKeyWorked){
+      console.warn("⚠️ NewsData key set but ALL requests failed or returned 0 results — check key validity at newsdata.io dashboard");
     }
   } else {
     results.push("NOTE: Add your free NewsData.io API key in ⚙️ Settings to get real-time news. Get it free at newsdata.io");
-    console.warn("⚠️ No NewsData key");
+    console.warn("⚠️ No NewsData key set in settings");
   }
 
   // ── 2. WEATHER — Open-Meteo (always free, no key) ────────────────
@@ -1673,22 +1735,31 @@ function startQueryListen(){ console.log("🎤 [QUERY] startQueryListen() called
     }, isFinal?400:900);
   };
 
+  let networkRetries=0;
   r.onerror=e=>{
-    console.error("❌ [QUERY] onerror fired — error code:", e.error, "| message:", e.message || "(none)");
-    console.error("   Common causes:");
-    console.error("   • 'not-allowed' = mic permission denied");
-    console.error("   • 'no-speech'   = silence, nothing spoken");
-    console.error("   • 'aborted'     = recognition was manually stopped");
-    console.error("   • 'network'     = no internet or API unreachable");
-    console.error("   • 'audio-capture' = mic hardware issue");
+    console.error("❌ [QUERY] onerror — code:", e.error, "| message:", e.message||"(none)");
     if(e.error==="not-allowed"){
-      showErr("Mic permission denied — allow mic & reload.");
+      showErr("Mic permission denied. Tap the 🔒 icon in address bar → Allow Microphone → reload.");
+      setTimeout(()=>{hideErr();setOrb("wake");startWakeLoop();},3500);
     } else if(e.error==="network"){
-      showErr("Network error on speech recognition.");
+      networkRetries++;
+      console.warn("⚠️ [QUERY] Network error on speech API. Retry #"+networkRetries);
+      if(networkRetries<=2){
+        // auto-retry up to 2 times — often a transient connection blip
+        showErr("Reconnecting to speech service…");
+        setTimeout(()=>{ hideErr(); startQueryListen(); }, 800);
+        return;
+      } else {
+        showErr("Speech service unreachable. Check internet, or try Chrome instead of this browser.");
+        networkRetries=0;
+        setTimeout(()=>{hideErr();setOrb("wake");startWakeLoop();},3000);
+      }
     } else if(e.error!=="no-speech" && e.error!=="aborted"){
       showErr("Couldn't hear you. ("+e.error+")");
+      setTimeout(()=>{hideErr();setOrb("wake");startWakeLoop();},2200);
+    } else {
+      setTimeout(()=>{hideErr();setOrb("wake");startWakeLoop();},800);
     }
-    setTimeout(()=>{hideErr();setOrb("wake");startWakeLoop();},2200);
   };
 
   r.onend=()=>{
